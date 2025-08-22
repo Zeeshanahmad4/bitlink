@@ -1,0 +1,5 @@
+python-dotenv
+discord.py-self==1.9.2
+slack_sdk
+aiohttp
+discord-py
