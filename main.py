@@ -163,6 +163,8 @@ async def main():
         slack_socket_client.connect()
         print("Slack SocketMode client connected.")
         print("Connecting Discord client...")
+        if DISCORD_TOKEN is None:
+            raise ValueError("DISCORD_TOKEN is not set")
         await discord_client.start(DISCORD_TOKEN)
     except Exception as e:
         print(f"An error occurred during startup: {e}")
@@ -174,6 +176,7 @@ if __name__ == "__main__":
     # A simple check to ensure tokens are set
     if not all([DISCORD_TOKEN, SLACK_BOT_TOKEN, SLACK_APP_TOKEN]):
         print("FATAL ERROR: One or more required tokens are missing in Secrets.")
+        exit(1)
     else:
         try:
             asyncio.run(main())
