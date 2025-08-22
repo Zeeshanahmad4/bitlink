@@ -113,27 +113,42 @@ def handle_slack_message(client: SocketModeClient, req: SocketModeRequest):
 
     async def send_dm():
         try:
+            # Get the target Discord user object
             target_user = await discord_client.fetch_user(target_discord_user_id)
-            if not target_user: return
+            if not target_user:
+                print(f"Could not find Discord user with ID: {target_discord_user_id}")
+                return
+            
+            # Ensure a DM channel exists with the user
+            dm_channel = await target_user.create_dm()
 
-            # Forward text
-            if message_text:
-                await target_user.send(message_text)
+            # Send the message using a manual HTTP request to look more human
+            url = f"https://discord.com/api/v9/channels/{dm_channel.id}/messages"
+            
+            headers = {
+                "Authorization": DISCORD_TOKEN,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            
+            payload = {
+                "content": message_text,
+                "tts": False
+            }
 
-            # Forward files
-            if "files" in event:
-                for file_info in event["files"]:
-                    url = file_info.get("url_private_download")
-                    if url:
-                        headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
-                        async with aiohttp.ClientSession(headers=headers) as session:
-                            async with session.get(url) as resp:
-                                if resp.status == 200:
-                                    file_data = await resp.read()
-                                    discord_file = discord.File(io.BytesIO(file_data), filename=file_info.get("name"))
-                                    await target_user.send(file=discord_file)
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.post(url, json=payload) as response:
+                    if response.status >= 200 and response.status < 300:
+                        print(f"Successfully sent DM to {target_discord_user_id}")
+                    else:
+                        # Print the exact error from Discord's server
+                        response_text = await response.text()
+                        print(f"Error sending DM via HTTP. Status: {response.status}, Response: {response_text}")
+
+            # Note: We are not handling file forwarding in this new manual method yet.
+            # Let's get text working first.
+
         except Exception as e:
-            print(f"Error forwarding Slack -> Discord: {e}")
+            print(f"An exception occurred in send_dm function: {e}")
 
     asyncio.run_coroutine_threadsafe(send_dm(), discord_client.loop)
     client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
