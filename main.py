@@ -6,7 +6,9 @@ import json
 import asyncio
 import aiohttp
 import discord
+import time 
 from dotenv import load_dotenv
+
 from slack_sdk.web import WebClient
 from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
@@ -21,7 +23,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
-
+DISCORD_SUPER_PROPERTIES = os.getenv("DISCORD_SUPER_PROPERTIES") 
 # Load and parse client mappings from Secrets
 CLIENT_MAPPINGS_STR = os.getenv("CLIENT_MAPPINGS", "[]")
 CLIENT_MAPPINGS = json.loads(CLIENT_MAPPINGS_STR)
@@ -111,30 +113,52 @@ def handle_slack_message(client: SocketModeClient, req: SocketModeRequest):
 
     print(f"Received message from Slack channel {channel_id}. Forwarding to Discord user {target_discord_user_id}...")
 
+    # REPLACE THE OLD send_dm FUNCTION WITH THIS FINAL VERSION
+
     async def send_dm():
         try:
+            # Get the target Discord user object
             target_user = await discord_client.fetch_user(target_discord_user_id)
-            if not target_user: return
+            if not target_user:
+                print(f"Could not find Discord user with ID: {target_discord_user_id}")
+                return
 
-            # Forward text
-            if message_text:
-                await target_user.send(message_text)
+            # Ensure a DM channel exists with the user
+            dm_channel = await target_user.create_dm()
 
-            # Forward files
-            if "files" in event:
-                for file_info in event["files"]:
-                    url = file_info.get("url_private_download")
-                    if url:
-                        headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
-                        async with aiohttp.ClientSession(headers=headers) as session:
-                            async with session.get(url) as resp:
-                                if resp.status == 200:
-                                    file_data = await resp.read()
-                                    discord_file = discord.File(io.BytesIO(file_data), filename=file_info.get("name"))
-                                    await target_user.send(file=discord_file)
+            # --- We will now send the message using a manual HTTP request with full headers ---
+            url = f"https://discord.com/api/v9/channels/{dm_channel.id}/messages"
+
+            headers = {
+                "Authorization": DISCORD_TOKEN,
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                "X-Super-Properties": DISCORD_SUPER_PROPERTIES  # <-- THE CRUCIAL NEW HEADER
+            }
+
+            # Create a unique nonce for the message
+            nonce = str(int(time.time() * 1000))
+
+            payload = {
+                "content": message_text,
+                "tts": False,
+                "nonce": nonce
+            }
+
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.post(url, json=payload) as response:
+                    if response.status >= 200 and response.status < 300:
+                        print(f"Successfully sent DM to {target_discord_user_id}")
+                    else:
+                        # Print the exact error from Discord's server
+                        response_text = await response.text()
+                        print(f"Error sending DM via HTTP. Status: {response.status}, Response: {response_text}")
+
         except Exception as e:
-            print(f"Error forwarding Slack -> Discord: {e}")
+            print(f"An exception occurred in send_dm function: {e}")
 
+    # You will also need to add 'import time' at the top of your main.py file
+    # for the nonce generation to work.
     asyncio.run_coroutine_threadsafe(send_dm(), discord_client.loop)
     client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
 
@@ -148,6 +172,8 @@ async def main():
         slack_socket_client.connect()
         print("Slack SocketMode client connected.")
         print("Connecting Discord client...")
+        if DISCORD_TOKEN is None:
+            raise ValueError("DISCORD_TOKEN is not set")
         await discord_client.start(DISCORD_TOKEN)
     except Exception as e:
         print(f"An error occurred during startup: {e}")
@@ -159,6 +185,7 @@ if __name__ == "__main__":
     # A simple check to ensure tokens are set
     if not all([DISCORD_TOKEN, SLACK_BOT_TOKEN, SLACK_APP_TOKEN]):
         print("FATAL ERROR: One or more required tokens are missing in Secrets.")
+        exit(1)
     else:
         try:
             asyncio.run(main())
