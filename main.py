@@ -85,20 +85,27 @@ async def on_message(message: discord.Message):
 # --- 3. SLACK EVENT HANDLER (Receives messages from Developers) ---
 
 def handle_slack_message(client: SocketModeClient, req: SocketModeRequest):
-    client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
+    if req.type != "events_api":
+        client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
+        return
+    
     event = req.payload.get("event", {})
-    if event.get("bot_id") or "user" not in event:
+    
+    # Skip bot messages and messages without a user
+    if event.get("type") != "message" or event.get("bot_id") or "user" not in event:
+        client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
         return
 
     channel_id = event.get("channel")
     if channel_id not in slack_to_discord_map:
+        client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
         return
 
     client_info = slack_to_discord_map[channel_id]
     target_discord_user_id = int(client_info["discord_user_id"])
     message_text = event.get("text", "")
 
-    print(f"Received message from Slack. Forwarding to Discord user {target_discord_user_id}...")
+    print(f"Received message from Slack channel {channel_id}. Forwarding to Discord user {target_discord_user_id}...")
 
     async def send_dm():
         try:
@@ -125,6 +132,7 @@ def handle_slack_message(client: SocketModeClient, req: SocketModeRequest):
             print(f"Error forwarding Slack -> Discord: {e}")
 
     asyncio.run_coroutine_threadsafe(send_dm(), discord_client.loop)
+    client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
 
 slack_socket_client.socket_mode_request_listeners.append(handle_slack_message)
 
