@@ -6,7 +6,9 @@ import json
 import asyncio
 import aiohttp
 import discord
+import time 
 from dotenv import load_dotenv
+
 from slack_sdk.web import WebClient
 from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
@@ -21,7 +23,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
-
+DISCORD_SUPER_PROPERTIES = os.getenv("DISCORD_SUPER_PROPERTIES") 
 # Load and parse client mappings from Secrets
 CLIENT_MAPPINGS_STR = os.getenv("CLIENT_MAPPINGS", "[]")
 CLIENT_MAPPINGS = json.loads(CLIENT_MAPPINGS_STR)
@@ -111,6 +113,8 @@ def handle_slack_message(client: SocketModeClient, req: SocketModeRequest):
 
     print(f"Received message from Slack channel {channel_id}. Forwarding to Discord user {target_discord_user_id}...")
 
+    # REPLACE THE OLD send_dm FUNCTION WITH THIS FINAL VERSION
+
     async def send_dm():
         try:
             # Get the target Discord user object
@@ -118,21 +122,27 @@ def handle_slack_message(client: SocketModeClient, req: SocketModeRequest):
             if not target_user:
                 print(f"Could not find Discord user with ID: {target_discord_user_id}")
                 return
-            
+
             # Ensure a DM channel exists with the user
             dm_channel = await target_user.create_dm()
 
-            # Send the message using a manual HTTP request to look more human
+            # --- We will now send the message using a manual HTTP request with full headers ---
             url = f"https://discord.com/api/v9/channels/{dm_channel.id}/messages"
-            
+
             headers = {
                 "Authorization": DISCORD_TOKEN,
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                "X-Super-Properties": DISCORD_SUPER_PROPERTIES  # <-- THE CRUCIAL NEW HEADER
             }
-            
+
+            # Create a unique nonce for the message
+            nonce = str(int(time.time() * 1000))
+
             payload = {
                 "content": message_text,
-                "tts": False
+                "tts": False,
+                "nonce": nonce
             }
 
             async with aiohttp.ClientSession(headers=headers) as session:
@@ -144,12 +154,11 @@ def handle_slack_message(client: SocketModeClient, req: SocketModeRequest):
                         response_text = await response.text()
                         print(f"Error sending DM via HTTP. Status: {response.status}, Response: {response_text}")
 
-            # Note: We are not handling file forwarding in this new manual method yet.
-            # Let's get text working first.
-
         except Exception as e:
             print(f"An exception occurred in send_dm function: {e}")
 
+    # You will also need to add 'import time' at the top of your main.py file
+    # for the nonce generation to work.
     asyncio.run_coroutine_threadsafe(send_dm(), discord_client.loop)
     client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
 
