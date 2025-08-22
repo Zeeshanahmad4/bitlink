@@ -85,14 +85,18 @@ async def on_message(message: discord.Message):
 # --- 3. SLACK EVENT HANDLER (Receives messages from Developers) ---
 
 def handle_slack_message(client: SocketModeClient, req: SocketModeRequest):
+    print(f"Received Slack event: {req.type}")
+    
     if req.type != "events_api":
         client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
         return
     
     event = req.payload.get("event", {})
+    print(f"Event details: {event}")
     
     # Skip bot messages and messages without a user
     if event.get("type") != "message" or event.get("bot_id") or "user" not in event:
+        print(f"Skipping event - type: {event.get('type')}, bot_id: {event.get('bot_id')}, has_user: {'user' in event}")
         client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
         return
 
