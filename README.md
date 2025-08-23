@@ -97,8 +97,7 @@ Listen to Slack channel events → Dispatch to the correct platform/user → Tra
 ---
 
 ## Demo
-
-[![Watch a 30-sec demo](demo.mp4)
+![Demo](demo.gif)
 
 ---
 
