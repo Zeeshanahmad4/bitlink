@@ -98,11 +98,7 @@ Listen to Slack channel events → Dispatch to the correct platform/user → Tra
 
 ## Demo
 
-Add a short Loom or GIF showing: a client DM → mirrored in Slack → reply from Slack → delivered back to client.
-
-```
-[![Watch a 1‑min demo](./docs/demo-thumb.png)](YOUR_LOOM_LINK)
-```
+[![Watch a 30-sec demo](demo.mp4)
 
 ---
 
