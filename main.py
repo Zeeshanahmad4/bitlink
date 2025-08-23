@@ -115,64 +115,66 @@ def handle_slack_message(client: SocketModeClient, req: SocketModeRequest):
 
     print(f"Received message from Slack channel {channel_id}. Forwarding to Discord user {target_discord_user_id}...")
 
-    # REPLACE THE OLD send_dm FUNCTION WITH THIS FINAL VERSION
-
-    # REPLACE THE OLD send_dm FUNCTION WITH THIS DEFINITIVE VERSION
-
     async def send_dm():
-        # This function now only handles the manual HTTP request part.
-        # We assume target_discord_user_id and message_text are available from the outer scope.
-
-        # First, we need the DM channel ID. We get this using a preliminary API call.
+        print(f"Attempting to send DM to Discord user {target_discord_user_id}")
+        
+        # Try to get DM channel ID via Discord API directly
         dm_channel_id = None
+        
         try:
-            target_user = await discord_client.fetch_user(target_discord_user_id)
-            if target_user:
-                dm_channel = await target_user.create_dm()
-                dm_channel_id = dm_channel.id
-        except Exception as e:
-            print(f"Could not fetch DM channel using discord.py-self, will try manual API call. Reason: {e}")
-            # As a fallback, we can try to create the DM channel via the API too, but this is more complex.
-            # Let's stick to the hybrid approach for now.
-
-        if not dm_channel_id:
-            print("CRITICAL: Failed to get DM channel ID. Cannot send message.")
-            return
-
-        try:
-            url = f"https://discord.com/api/v9/channels/{dm_channel_id}/messages"
-
-            # --- Building the perfect headers from our captured request ---
+            # First try to create/get DM channel via API
+            dm_url = f"https://discord.com/api/v9/users/@me/channels"
             headers = {
                 "Authorization": DISCORD_TOKEN,
-                "Content-Type": "application/json",
-                "User-Agent": DISCORD_USER_AGENT,
-                "Cookie": DISCORD_COOKIE,
-                "X-Super-Properties": DISCORD_SUPER_PROPERTIES
-                # Add any other interesting headers you found in your cURL, like 'x-discord-locale', 'referer', etc.
+                "Content-Type": "application/json"
             }
-
+            
+            if DISCORD_USER_AGENT:
+                headers["User-Agent"] = DISCORD_USER_AGENT
+            if DISCORD_COOKIE:
+                headers["Cookie"] = DISCORD_COOKIE
+            if DISCORD_SUPER_PROPERTIES:
+                headers["X-Super-Properties"] = DISCORD_SUPER_PROPERTIES
+            
+            dm_payload = {
+                "recipient_id": str(target_discord_user_id)
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(dm_url, headers=headers, json=dm_payload) as dm_response:
+                    if 200 <= dm_response.status < 300:
+                        dm_data = await dm_response.json()
+                        dm_channel_id = dm_data.get("id")
+                        print(f"Successfully created/retrieved DM channel: {dm_channel_id}")
+                    else:
+                        dm_error = await dm_response.text()
+                        print(f"Failed to create DM channel. Status: {dm_response.status}, Error: {dm_error}")
+                        return
+            
+            if not dm_channel_id:
+                print("Could not get DM channel ID")
+                return
+            
+            # Now send the message
+            message_url = f"https://discord.com/api/v9/channels/{dm_channel_id}/messages"
             nonce = str(int(time.time() * 1000))
-            payload = {
+            
+            message_payload = {
                 "content": message_text,
                 "tts": False,
                 "nonce": nonce
             }
-
-            print("Sending message with fully replicated headers...")
-            async with aiohttp.ClientSession(headers=headers) as session:
-                async with session.post(url, json=payload) as response:
-                    if response.status >= 200 and response.status < 300:
-                        print(f"SUCCESS: Successfully sent DM to {target_discord_user_id}")
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(message_url, headers=headers, json=message_payload) as response:
+                    if 200 <= response.status < 300:
+                        print(f"SUCCESS: Message sent to Discord user {target_discord_user_id}")
                     else:
                         response_text = await response.text()
-                        print(f"API CALL FAILED. Status: {response.status}, Response: {response_text}")
-
+                        print(f"Failed to send message. Status: {response.status}, Response: {response_text}")
+                        
         except Exception as e:
-            print(f"An exception occurred in send_dm function: {e}")
-
-    # You will also need to add 'import time' at the top of your main.py file
-    # for the nonce generation to work.
+            print(f"Exception in send_dm function: {e}")
     asyncio.run_coroutine_threadsafe(send_dm(), discord_client.loop)
     client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
 
