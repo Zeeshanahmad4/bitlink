@@ -97,7 +97,9 @@ Listen to Slack channel events → Dispatch to the correct platform/user → Tra
 ---
 
 ## Demo
-![Demo](demo.gif)
+<p align="center">
+  <img src="demo.gif" alt="Demo" />
+</p>
 
 ---
 
