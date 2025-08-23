@@ -24,6 +24,8 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
 DISCORD_SUPER_PROPERTIES = os.getenv("DISCORD_SUPER_PROPERTIES") 
+DISCORD_COOKIE = os.getenv("DISCORD_COOKIE") # <-- ADD THIS
+DISCORD_USER_AGENT = os.getenv("DISCORD_USER_AGENT") # <-- ADD THIS
 # Load and parse client mappings from Secrets
 CLIENT_MAPPINGS_STR = os.getenv("CLIENT_MAPPINGS", "[]")
 CLIENT_MAPPINGS = json.loads(CLIENT_MAPPINGS_STR)
@@ -115,44 +117,56 @@ def handle_slack_message(client: SocketModeClient, req: SocketModeRequest):
 
     # REPLACE THE OLD send_dm FUNCTION WITH THIS FINAL VERSION
 
+    # REPLACE THE OLD send_dm FUNCTION WITH THIS DEFINITIVE VERSION
+
     async def send_dm():
+        # This function now only handles the manual HTTP request part.
+        # We assume target_discord_user_id and message_text are available from the outer scope.
+
+        # First, we need the DM channel ID. We get this using a preliminary API call.
+        dm_channel_id = None
         try:
-            # Get the target Discord user object
             target_user = await discord_client.fetch_user(target_discord_user_id)
-            if not target_user:
-                print(f"Could not find Discord user with ID: {target_discord_user_id}")
-                return
+            if target_user:
+                dm_channel = await target_user.create_dm()
+                dm_channel_id = dm_channel.id
+        except Exception as e:
+            print(f"Could not fetch DM channel using discord.py-self, will try manual API call. Reason: {e}")
+            # As a fallback, we can try to create the DM channel via the API too, but this is more complex.
+            # Let's stick to the hybrid approach for now.
 
-            # Ensure a DM channel exists with the user
-            dm_channel = await target_user.create_dm()
+        if not dm_channel_id:
+            print("CRITICAL: Failed to get DM channel ID. Cannot send message.")
+            return
 
-            # --- We will now send the message using a manual HTTP request with full headers ---
-            url = f"https://discord.com/api/v9/channels/{dm_channel.id}/messages"
+        try:
+            url = f"https://discord.com/api/v9/channels/{dm_channel_id}/messages"
 
+            # --- Building the perfect headers from our captured request ---
             headers = {
                 "Authorization": DISCORD_TOKEN,
                 "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                "X-Super-Properties": DISCORD_SUPER_PROPERTIES  # <-- THE CRUCIAL NEW HEADER
+                "User-Agent": DISCORD_USER_AGENT,
+                "Cookie": DISCORD_COOKIE,
+                "X-Super-Properties": DISCORD_SUPER_PROPERTIES
+                # Add any other interesting headers you found in your cURL, like 'x-discord-locale', 'referer', etc.
             }
 
-            # Create a unique nonce for the message
             nonce = str(int(time.time() * 1000))
-
             payload = {
                 "content": message_text,
                 "tts": False,
                 "nonce": nonce
             }
 
+            print("Sending message with fully replicated headers...")
             async with aiohttp.ClientSession(headers=headers) as session:
                 async with session.post(url, json=payload) as response:
                     if response.status >= 200 and response.status < 300:
-                        print(f"Successfully sent DM to {target_discord_user_id}")
+                        print(f"SUCCESS: Successfully sent DM to {target_discord_user_id}")
                     else:
-                        # Print the exact error from Discord's server
                         response_text = await response.text()
-                        print(f"Error sending DM via HTTP. Status: {response.status}, Response: {response_text}")
+                        print(f"API CALL FAILED. Status: {response.status}, Response: {response_text}")
 
         except Exception as e:
             print(f"An exception occurred in send_dm function: {e}")
