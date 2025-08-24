@@ -68,7 +68,6 @@ Listen to Slack channel events → Dispatch to the correct platform/user → Tra
 
 ## Security & Compliance
 
-- Official APIs only; **no scraping or ToS violations**
 - Verify webhook signatures (Slack), app secrets (Meta), and bot tokens
 - Principle of least privilege OAuth scopes
 - Per‑tenant separation; audit logs for all outbound sends
