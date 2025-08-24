@@ -68,7 +68,7 @@ Listen to Slack channel events → Dispatch to the correct platform/user → Tra
 
 ## Security & Compliance
 
-- Verify webhook signatures (Slack), app secrets (Meta), and bot tokens
+- Verify webhook signatures (Slack), app secrets (Meta), and accounts tokens
 - Principle of least privilege OAuth scopes
 - Per‑tenant separation; audit logs for all outbound sends
 - GDPR‑aware: easy export/delete by contact id
