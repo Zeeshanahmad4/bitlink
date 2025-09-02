@@ -1,0 +1,27 @@
+2025/09/03-00:41:00.705 5018 Reusing MANIFEST C:\Users\user\Desktop\BitLink\whatsapp-bot\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/09/03-00:41:00.710 5018 Recovering log #300
+2025/09/03-00:41:01.043 5018 Reusing old log C:\Users\user\Desktop\BitLink\whatsapp-bot\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000300.log 
+2025/09/03-00:41:14.136 1590 Level-0 table #312: started
+2025/09/03-00:41:14.255 1590 Level-0 table #312: 1110343 bytes OK
+2025/09/03-00:41:14.259 1590 Delete type=0 #300
+2025/09/03-00:41:14.260 1590 Manual compaction at level-0 from '\x00\x1e\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x1f\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/09/03-00:41:20.350 5fcc Compacting 1@1 + 8@2 files
+2025/09/03-00:41:20.816 5fcc Generated table #313@1: 56385 keys, 2283899 bytes
+2025/09/03-00:41:21.014 5fcc Generated table #314@1: 1838 keys, 2148613 bytes
+2025/09/03-00:41:21.126 5fcc Generated table #315@1: 3021 keys, 2152857 bytes
+2025/09/03-00:41:21.252 5fcc Generated table #316@1: 2915 keys, 2149300 bytes
+2025/09/03-00:41:21.544 5fcc Generated table #317@1: 27824 keys, 2230655 bytes
+2025/09/03-00:41:21.880 5fcc Generated table #318@1: 24332 keys, 2204708 bytes
+2025/09/03-00:41:22.369 5fcc Generated table #319@1: 81898 keys, 2226708 bytes
+2025/09/03-00:41:22.592 5fcc Generated table #320@1: 63063 keys, 1422509 bytes
+2025/09/03-00:41:22.592 5fcc Compacted 1@1 + 8@2 files => 16819249 bytes
+2025/09/03-00:41:22.595 5fcc compacted to: files[ 0 0 8 0 0 0 0 ]
+2025/09/03-00:41:22.596 5fcc Delete type=2 #302
+2025/09/03-00:41:22.596 5fcc Delete type=2 #303
+2025/09/03-00:41:22.596 5fcc Delete type=2 #304
+2025/09/03-00:41:22.596 5fcc Delete type=2 #305
+2025/09/03-00:41:22.596 5fcc Delete type=2 #306
+2025/09/03-00:41:22.596 5fcc Delete type=2 #307
+2025/09/03-00:41:22.596 5fcc Delete type=2 #308
+2025/09/03-00:41:22.597 5fcc Delete type=2 #309
+2025/09/03-00:41:22.597 5fcc Delete type=2 #312
