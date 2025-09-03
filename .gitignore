@@ -1,7 +1,9 @@
 # Dependencies
 /node_modules
 /whatsapp-bot/node_modules
-credentials
+credentials/
+service_account.json
+
 
 # Environment variables
 .env
