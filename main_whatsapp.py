@@ -1,4 +1,4 @@
-# main_whatsapp.py - FINAL, COMPATIBLE INSTANT REFRESH VERSION
+# main_whatsapp.py - YOUR ORIGINAL CODE + SIMPLE DELETION FUNCTIONALITY
 
 import time
 import requests
@@ -9,7 +9,6 @@ import base64
 import threading
 from dotenv import load_dotenv
 from slack_sdk import WebClient
-# --- CORRECTED IMPORT: We do NOT import SocketModeResponse ---
 from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.errors import SlackApiError
 from flask import Flask
@@ -32,6 +31,9 @@ processed_slack_events = deque(maxlen=500)
 processed_whatsapp_events = deque(maxlen=500)
 whatsapp_to_slack_map = {}
 slack_to_whatsapp_map = {}
+
+# ⭐ ONLY NEW ADDITION: Simple message mapping for deletion
+slack_to_whatsapp_msg_map = {}
 
 def reload_config():
     """Fetches the latest mappings from Google Sheets and safely updates the global maps."""
@@ -73,7 +75,6 @@ def main():
     refresh_server_thread.daemon = True
     refresh_server_thread.start()
     
-    # This lambda is crucial to pass the web_client correctly to our handler
     socket_client.socket_mode_request_listeners.append(
         lambda client, req: handle_slack_message(client, req, web_client)
     )
@@ -84,7 +85,7 @@ def main():
     while not stop_event.is_set():
         time.sleep(1)
 
-# --- All helper functions and workers ---
+# --- Helper functions (YOUR ORIGINAL + MINIMAL ADDITIONS) ---
 def get_whatsapp_messages():
     try:
         response = requests.get(f"{NODE_API_URL}/get-messages")
@@ -93,13 +94,26 @@ def get_whatsapp_messages():
         logging.error(f"Error connecting to WhatsApp service: {e}")
     return []
 
+# ⭐ MODIFIED: Now returns response to get messageId for deletion mapping
 def send_whatsapp_message(chat_id, message, media=None):
     try:
         payload = {"chatId": chat_id, "message": message, "media": media}
         response = requests.post(f"{NODE_API_URL}/send-message", json=payload)
-        return response.status_code == 200
+        if response.status_code == 200:
+            return response.json()  # Return full response to get messageId
+        return None
     except requests.exceptions.RequestException as e:
         logging.error(f"Error sending message via WhatsApp service: {e}")
+    return None
+
+# ⭐ NEW: Simple deletion function (no queues, direct call like your style)
+def delete_whatsapp_message(message_id):
+    try:
+        payload = {"messageId": message_id}
+        response = requests.post(f"{NODE_API_URL}/delete-message", json=payload)
+        return response.status_code == 200
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error deleting WhatsApp message: {e}")
     return False
 
 def poll_whatsapp_and_forward(web_client: WebClient):
@@ -134,12 +148,24 @@ def poll_whatsapp_and_forward(web_client: WebClient):
         time.sleep(1)
     logging.info("WhatsApp polling worker is shutting down.")
 
-# --- CORRECTED FUNCTION, COMPATIBLE WITH OLDER slack_sdk ---
+# ⭐ MODIFIED: Added deletion detection (keeping your fast direct threading style)
 def handle_slack_message(client: SocketModeClient, req, web_client: WebClient):
-    # This simple dictionary is the correct way to acknowledge in your version.
     client.send_socket_mode_response({"envelope_id": req.envelope_id})
     
     event = req.payload.get("event", {})
+    event_type = event.get("type")
+    
+    # Handle message deletion (simple and fast)
+    if event_type == "message" and event.get("subtype") == "message_deleted":
+        deleted_ts = event.get("deleted_ts")
+        if deleted_ts and deleted_ts in slack_to_whatsapp_msg_map:
+            whatsapp_msg_id = slack_to_whatsapp_msg_map.pop(deleted_ts)
+            logging.info(f"🗑️ Deleting WhatsApp message: {whatsapp_msg_id}")
+            # Keep your style: direct threading, no queues
+            threading.Thread(target=delete_whatsapp_message, args=(whatsapp_msg_id,), daemon=True).start()
+        return
+    
+    # Regular message handling (YOUR ORIGINAL CODE)
     if event.get("type") != "message" or event.get("bot_id"): return
     channel_id, ts = event.get("channel"), event.get("ts")
     event_id = (channel_id, ts)
@@ -151,9 +177,12 @@ def handle_slack_message(client: SocketModeClient, req, web_client: WebClient):
         active_threads.append(thread)
         thread.start()
 
+# ⭐ MODIFIED: Store message mapping for deletion (minimal change to your function)
 def process_slack_to_whatsapp(event, bot_token):
     try:
         channel_id = event.get("channel")
+        slack_ts = event.get("ts")  # ⭐ Get Slack timestamp for mapping
+        
         with config_lock:
             if channel_id not in slack_to_whatsapp_map: return
             mapping = slack_to_whatsapp_map[channel_id]
@@ -167,7 +196,14 @@ def process_slack_to_whatsapp(event, bot_token):
             if file_response.status_code == 200:
                 file_content_base64 = base64.b64encode(file_response.content).decode('utf-8')
                 media_payload = {"mimetype": file_info.get("mimetype"), "filename": file_info.get("name"), "data": file_content_base64}
-        if send_whatsapp_message(whatsapp_chat_id, text, media_payload):
+        
+        # ⭐ MODIFIED: Get response to store mapping
+        response = send_whatsapp_message(whatsapp_chat_id, text, media_payload)
+        if response and response.get("success"):
+            # ⭐ Store mapping for future deletion (simple dict, no complexity)
+            whatsapp_msg_id = response.get("messageId")
+            if whatsapp_msg_id:
+                slack_to_whatsapp_msg_map[slack_ts] = whatsapp_msg_id
             logging.info(f"Forwarded Slack message to WhatsApp user '{client_name}'")
         else:
             logging.error(f"Failed to forward Slack message to WhatsApp user '{client_name}'")

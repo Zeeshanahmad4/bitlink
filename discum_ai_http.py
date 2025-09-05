@@ -158,6 +158,7 @@ def on_discord_message(resp):
         author_id = message_dict['author']['id']
         if 'guild_id' not in message_dict and str(author_id) in discord_id_to_slack_map and author_id != MY_USER_ID:
             client_info = discord_id_to_slack_map[str(author_id)]
+            logging.info(f"-> Discord DM received from '{client_info['client_name']}'. Forwarding to Slack...")
             coro = process_discord_to_slack(message_dict, client_info)
             asyncio.run_coroutine_threadsafe(coro, main_loop)
 async def process_discord_to_slack(message_dict, client_info):
@@ -204,6 +205,7 @@ async def poll_slack_and_forward():
                     for message in messages:
                         user, text, ts = message.get("user"), message.get("text", ""), message.get("ts")
                         if user and user != slack_bot_user_id and ts != last_known_ts:
+                            logging.info(f"<- Slack message received for '{client_info['client_name']}'. Forwarding to Discord...")
                             discord_user_id = client_info["discord_user_id"]
                             if message.get("files"):
                                 file_info = message["files"][0]
