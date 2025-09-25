@@ -1,3 +1,6 @@
-2025/09/05-10:55:37.171 2238 Reusing MANIFEST C:\Users\user\Desktop\bitlink-github\whatsapp-bot\.wwebjs_auth\session\Default\Local Storage\leveldb/MANIFEST-000001
-2025/09/05-10:55:37.180 2238 Recovering log #8
-2025/09/05-10:55:37.181 2238 Reusing old log C:\Users\user\Desktop\bitlink-github\whatsapp-bot\.wwebjs_auth\session\Default\Local Storage\leveldb/000008.log 
+2025/09/23-13:06:21.741 296c Reusing MANIFEST C:\Users\user\Desktop\bitlink-github\whatsapp-bot\.wwebjs_auth\session\Default\Local Storage\leveldb/MANIFEST-000001
+2025/09/23-13:06:21.744 296c Recovering log #24
+2025/09/23-13:06:21.744 296c Reusing old log C:\Users\user\Desktop\bitlink-github\whatsapp-bot\.wwebjs_auth\session\Default\Local Storage\leveldb/000024.log 
+2025/09/23-14:16:37.783 46c4 Level-0 table #29: started
+2025/09/23-14:16:37.816 46c4 Level-0 table #29: 16484 bytes OK
+2025/09/23-14:16:37.821 46c4 Delete type=0 #24
