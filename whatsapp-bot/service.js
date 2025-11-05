@@ -235,7 +235,8 @@ client.on('message', async (msg) => {
     } else {
         messageData.media = null;
         messageQueue.push(messageData);
-        console.log(`💬 Text message received from ${msg.from}: ${msg.body.substring(0, 50)}...`);
+    const ts = new Date().toISOString();
+    console.log(`[${ts}] 💬 Text message received from ${msg.from}: ${msg.body.substring(0, 50)}...`);
     }
 });
 client.on('auth_failure', msg => {
@@ -342,6 +343,7 @@ app.post('/send-message', async (req, res) => {
             console.log(`💬 Successfully sent text message to ${chatId}`);
         }
 
+        // ✅✅✅ THIS IS THE CRITICAL MISSING PART ✅✅✅
         res.status(200).json({
             success: true,
             messageId: sentMessage.id._serialized,

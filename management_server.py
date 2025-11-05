@@ -16,14 +16,15 @@ app = Flask(__name__)
 # --- NEW: Function to send the "refresh" signal to the running bridges ---
 def send_refresh_signals():
     """Sends a POST request to the bridge servers to trigger a config reload."""
-    # Read the port numbers from the .env file, with defaults
-    whatsapp_port = os.getenv("WHATSAPP_REFRESH_PORT", 8001)
-    discord_port = os.getenv("DISCORD_REFRESH_PORT", 8002)
+    whatsapp_port = os.getenv("WHATSAPP_REFRESH_PORT", 8101) # You have 8001 in your code, I'll use that.
+    discord_port = os.getenv("DISCORD_REFRESH_PORT", 8102)
+    telegram_port = os.getenv("TELEGRAM_REFRESH_PORT", 8003) # <-- ADD THIS LINE
     
     headers = {'Content-Type': 'application/json'}
     urls = [
         f"http://localhost:{whatsapp_port}/refresh",
-        f"http://localhost:{discord_port}/refresh"
+        f"http://localhost:{discord_port}/refresh",
+        f"http://localhost:{telegram_port}/refresh" # <-- ADD THIS LINE
     ]
     
     print("Sending refresh signals to bridge services...")
@@ -98,7 +99,85 @@ def add_client_command():
     return jsonify({
         "response_type": "ephemeral",
         "text": "Got it! Adding client and signaling bridges to refresh..."
-    })
+    }) 
+# --- NEW: Pause Channel Command ---
+@app.route('/slack/commands/pause-channel', methods=['POST'])
+def pause_channel_command():
+
+    verifier = SignatureVerifier(os.environ.get("SLACK_SIGNING_SECRET"))
+    if not verifier.is_valid_request(request.get_data(), request.headers):
+        return "Invalid request signature", 403
+
+    channel_id = request.form['text'].strip()
+    response_url = request.form['response_url']
+
+    def process_pause():
+        try:
+            gc = gspread.service_account(filename='credentials/service_account.json')
+            spreadsheet = gc.open("BitLink Client Mappings")
+            worksheet = spreadsheet.sheet1
+            cell = worksheet.find(channel_id)
+            if cell:
+                paused_col = None
+                for idx, col_name in enumerate(worksheet.row_values(1), start=1):
+                    if col_name.lower() == "paused":
+                        paused_col = idx
+                        break
+                if paused_col:
+                    worksheet.update_cell(cell.row, paused_col, "TRUE")
+                    send_refresh_signals()
+                    payload = {"response_type": "in_channel", "text": f"⏸️ Channel {channel_id} paused."}
+                else:
+                    payload = {"response_type": "ephemeral", "text": "❌ 'paused' column not found in sheet."}
+            else:
+                payload = {"response_type": "ephemeral", "text": f"❌ Channel ID {channel_id} not found."}
+        except Exception as e:
+            payload = {"response_type": "ephemeral", "text": f"❌ Error: {e}"}
+        requests.post(response_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
+
+    thread = threading.Thread(target=process_pause)
+    thread.start()
+    return jsonify({"response_type": "ephemeral", "text": "Processing pause request..."})
+
+# --- NEW: Resume Channel Command ---
+@app.route('/slack/commands/resume-channel', methods=['POST'])
+def resume_channel_command():
+
+    verifier = SignatureVerifier(os.environ.get("SLACK_SIGNING_SECRET"))
+    if not verifier.is_valid_request(request.get_data(), request.headers):
+        return "Invalid request signature", 403
+
+    channel_id = request.form['text'].strip()
+    response_url = request.form['response_url']
+
+    def process_resume():
+        try:
+            gc = gspread.service_account(filename='credentials/service_account.json')
+            spreadsheet = gc.open("BitLink Client Mappings")
+            worksheet = spreadsheet.sheet1
+            cell = worksheet.find(channel_id)
+            if cell:
+                paused_col = None
+                for idx, col_name in enumerate(worksheet.row_values(1), start=1):
+                    if col_name.lower() == "paused":
+                        paused_col = idx
+                        break
+                if paused_col:
+                    worksheet.update_cell(cell.row, paused_col, "FALSE")
+                    send_refresh_signals()
+                    payload = {"response_type": "in_channel", "text": f"▶️ Channel {channel_id} resumed."}
+                else:
+                    payload = {"response_type": "ephemeral", "text": "❌ 'paused' column not found in sheet."}
+            else:
+                payload = {"response_type": "ephemeral", "text": f"❌ Channel ID {channel_id} not found."}
+        except Exception as e:
+            payload = {"response_type": "ephemeral", "text": f"❌ Error: {e}"}
+        requests.post(response_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
+
+    thread = threading.Thread(target=process_resume)
+    thread.start()
+    return jsonify({"response_type": "ephemeral", "text": "Processing resume request..."})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
+

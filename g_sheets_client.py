@@ -46,6 +46,9 @@ def get_client_mappings(platform: str, match_startswith: bool = False) -> list:
         logging.info(f"Successfully received {len(platform_clients)} client file(s) for {platform}.")
         for client in platform_clients:
             client['external_id'] = str(client['external_id'])
+            # Add paused column as boolean
+            paused_val = client.get('paused', False)
+            client['paused'] = str(paused_val).strip().lower() in ['true', '1', 'yes']
         return platform_clients
     except Exception as e:
         logging.error(f"FATAL: A critical error occurred while accessing Google Sheets: {e}")

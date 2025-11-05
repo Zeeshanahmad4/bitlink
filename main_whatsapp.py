@@ -9,12 +9,17 @@ import base64
 import threading
 import subprocess
 import string
+import google.generativeai as genai
+from flask import request, jsonify 
 from dotenv import load_dotenv
 from slack_sdk import WebClient
 from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.errors import SlackApiError
 from flask import Flask
 from collections import deque
+from slack_sdk.models.views import View
+from slack_sdk.models.blocks import InputBlock, SectionBlock, PlainTextObject
+from slack_sdk.models.blocks import PlainTextInputElement, InputBlock, SectionBlock
 
 from g_sheets_client import get_client_mappings
 # Convert MB to bytes for easy comparison
@@ -38,6 +43,7 @@ SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 NODE_API_URL = os.getenv("NODE_API_URL", "http://127.0.0.1:3101")
 WHATSAPP_REFRESH_PORT = os.getenv("WHATSAPP_REFRESH_PORT", 8101)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # --- Global State Variables ---
 config_lock = threading.Lock()
@@ -49,7 +55,115 @@ whatsapp_to_slack_map = {}
 slack_to_whatsapp_map = {}
 slack_to_whatsapp_msg_map = {}
 
+
+MASTER_PROMPT = """
+YOUR TASK:
+Please take my notes and the prior chat. Write me a complete, ready-to-send message for the client.
+The message should always:
+	•	Be polite, professional, friendly, and respectful.
+	•	Use clear, natural, human language.
+	•	Be effortlessly engaging and approachable.
+	•	Be simple and conversational.
+	•	Vary sentence lengths naturally (short and long mixed).
+	•	Use common idioms or informal fillers (like “just,” “honestly,” “you know”) sparingly and authentically.
+	•	Limit and casually explain any professional jargon.
+	•	Show that I am managing coordination between client and dev smoothly.
+	•	Include details about timelines, milestones, deliverables, or next steps if needed.
+	•	Address any questions or issues from the previous chat.
+	•	Add anything helpful so the client feels informed and supported.
+	•	Include a polite, natural closing.
+	•	Keep the style spontaneous, dynamic, and authentically human.
+	•	Maintain a conversational tone—even when explaining technical topics.
+	•	Do not use emojis.
+IMPORTANT RULES:
+	•	Be concise and to the point. Aim to match the length and complexity of my raw draft.
+	•	Directly address the core question or statement from my draft first, before adding any extra detail.
+	•	Do not over-explain unless my draft specifically asks for a detailed explanation.
+	•	Do not include any introductory or framing lines that talk about delivering the message, such as “Sure! Here’s your client-ready message,” or anything similar.
+	•	Do not include any closing lines or sign-offs like “Cheers,” “Regards,” “Thanks,” or my name.
+	•	The output should be only the client-ready message itself—clean, direct, and ready to paste straight into the chat thread without any added explanation or wrapper.
+"""
+
+# PASTE THESE THREE FUNCTIONS HERE
+
+def format_chat_history(messages, bot_user_id):
+    """Formats Slack message history into a clean 'Me:' and 'Client:' format for the AI."""
+    history = []
+    for msg in reversed(messages):  # reverse to get chronological order
+        user_name = "Client"
+        # Check if the message is from our team (the bot/bridge)
+        if 'bot_id' in msg or msg.get('user') == bot_user_id:
+            user_name = "Me"
+        
+        # If it's a message posted with a custom username (from your bridge) it's a client
+        if 'username' in msg:
+             user_name = "Client"
+        
+        text = msg.get('text', '')
+        if text:
+            history.append(f"{user_name}: {text}")
+    return "\n".join(history)
+
+# PASTE THIS ENTIRE FUNCTION. IT CONTAINS THE HARDCODED KEY FOR TESTING.
+
+# PASTE THIS FINAL, CORRECTED FUNCTION.
+
+# PASTE THIS SIMPLIFIED VERSION of get_enhanced_message
+   
+    
+def get_enhanced_message(chat_history, raw_draft):
+    """Calls the Google Gemini API to get the rewritten message without project context."""
+    try:
+        # If you hardcoded your key for testing, it would go here.
+        # Otherwise, this uses the key from your .env file.
+        genai.configure(api_key="AIzaSyA6PymEguEq_HpR1enCnDJORNZkQsXR51E")
+        model = genai.GenerativeModel('gemini-pro-latest')
+        
+        # This is the new, simplified prompt without the project context
+        final_prompt = f"{MASTER_PROMPT}\n\n---\nHi, I want to prepare a client message. Below I’m sharing:\n\n1. Previous chat with the client:\n---\n{chat_history}\n---\n\n2. My raw draft or bullet points of what I want to say next:\n---\n{raw_draft}\n---"
+        
+        response = model.generate_content(final_prompt)
+        return response.text.strip()
+        
+    except Exception as e:
+        logging.error(f"Google Gemini API call failed: {e}")
+        return f"Sorry, I couldn't enhance the message using Gemini. Error: {e}"
+
+# PASTE THIS UPDATED VERSION of process_enhancement_in_background
+
+def process_enhancement_in_background(channel_id, user_id, raw_draft, bot_user_id, web_client_token):
+    """Fetches history, calls AI, and sends the private reply. Runs in a background thread."""
+    web_client = WebClient(token=web_client_token)
+    try:
+        history_response = web_client.conversations_history(channel=channel_id, limit=5)
+        chat_history = format_chat_history(history_response.get('messages', []), bot_user_id)
+        
+        # This function call NO LONGER passes the project context
+        enhanced_message = get_enhanced_message(chat_history, raw_draft)
+        
+        web_client.chat_postEphemeral(
+            channel=channel_id,
+            user=user_id,
+            text=f"Here is your enhanced message:\n\n{enhanced_message}"
+        )
+    except Exception as e:
+        logging.error(f"Error processing enhancement: {e}")
+        web_client.chat_postEphemeral(
+            channel=channel_id,
+            user=user_id,
+            text=f"An error occurred while enhancing your message: {e}"
+        )
+
+
+
 # --- Helper Functions ---
+import re
+
+# --- Slack Link Cleaner ---
+def clean_slack_links(text):
+    """Replace any Slack link format <scheme:...|display> with display text only."""
+    # Handles http, https, mailto, and any other scheme
+    return re.sub(r'<[^|>]+\|([^>]+)>', r'\1', text)
 
 def sanitize_id(external_id):
     if not external_id: return None
@@ -77,9 +191,11 @@ def send_whatsapp_message(chat_id, message, media=None):
     return None
 
 def delete_whatsapp_message(message_id):
+    logging.info(f"Attempting to delete WhatsApp message: {message_id}")
     try:
         payload = {"messageId": message_id}
         response = requests.post(f"{NODE_API_URL}/delete-message", json=payload)
+        logging.info(f"Delete request sent. Status code: {response.status_code}, Response: {response.text}")
         return response.status_code == 200
     except requests.exceptions.RequestException as e:
         logging.error(f"Error deleting WhatsApp message: {e}")
@@ -95,7 +211,8 @@ def reload_config():
         new_mappings = [{
             "client_name": c.get("client_name"), 
             "whatsapp_chat_id": sanitize_id(c.get("external_id")), 
-            "slack_channel_id": c.get("slack_channel_id")
+            "slack_channel_id": c.get("slack_channel_id"),
+            "paused": c.get("paused", False)
         } for c in client_mappings_raw]
         with config_lock:
             whatsapp_to_slack_map.clear()
@@ -105,15 +222,7 @@ def reload_config():
         logging.info(f"Configuration reloaded. Now tracking {len(whatsapp_to_slack_map)} clients.")
     return "Configuration reloaded.", 200
 
-# <<< THIS FUNCTION CONTAINS THE FIX FOR CLEAN NOTIFICATIONS >>>
-# In main_whatsapp.py
 
-# // START OF NEW CODE TO PASTE ============================================
-
-# The full, final version of the function for main_whatsapp.py
-
-# The full, final version of the function for main_whatsapp.py
-# main_whatsapp.py - ADD THIS NEW HELPER FUNCTION
 
 def send_to_slack_with_retry(action, max_retries=3, delay_seconds=5, **kwargs):
     """
@@ -153,24 +262,29 @@ def poll_whatsapp_and_forward(web_client: WebClient):
         for msg in new_messages:
             event_id = msg.get('messageId')
             chat_id = msg.get('chatId')
-            if not event_id or not chat_id: continue
+            if not event_id or not chat_id:
+                continue
 
             if event_id not in processed_whatsapp_events and chat_id in current_clients:
                 processed_whatsapp_events.append(event_id)
                 client_info = current_clients[chat_id]
                 slack_channel = client_info["slack_channel_id"]
-                
+                # Check paused status before forwarding
+                if client_info.get('paused', False):
+                    logging.info(f"Channel {slack_channel} is paused. Skipping forwarding.")
+                    continue
+
                 sender_name = msg.get('senderName')
                 mapped_name = client_info["client_name"]
                 display_name = sender_name if sender_name else mapped_name
-                
+
                 content = msg.get('body', '')
                 quoted_body = msg.get('quotedBody')
-                
+
                 message_text = ""
                 if quoted_body:
                     message_text += f"> {quoted_body}\n"
-                
+
                 has_media = bool(msg.get('media') and msg['media'].get('data'))
 
                 # --- This is the modified section ---
@@ -215,17 +329,192 @@ def poll_whatsapp_and_forward(web_client: WebClient):
         time.sleep(0.5)
     logging.info("WhatsApp polling worker is shutting down.")
 
-# // END OF NEW CODE TO PASTE ==============================================
+# PASTE THIS NEW HANDLER FUNCTION HERE
+# In main_whatsapp.py
+# MAKE SURE THIS FUNCTION COMES FIRST
 
-# The definitive, race-condition-proof version for main_whatsapp.py
+# In main_whatsapp.py
+# REPLACE your old process_and_open_modal with this new function
+
+def process_and_update_modal(channel_id, raw_draft, bot_user_id, view_id, web_client_token):
+    """Fetches AI result and then UPDATES the existing 'loading' modal with the final view."""
+    web_client = WebClient(token=web_client_token)
+    try:
+        # --- 1. Get Context and Enhanced Message (Slow part) ---
+        history_response = web_client.conversations_history(channel=channel_id, limit=5)
+        chat_history = format_chat_history(history_response.get('messages', []), bot_user_id)
+        enhanced_message = get_enhanced_message(chat_history, raw_draft)
+
+        # --- 2. Build the FINAL, interactive modal view ---
+        final_view = View(
+            type="modal",
+            callback_id="enhance_modal_submission",
+            title=PlainTextObject(text="Review & Send"),
+            submit=PlainTextObject(text="Send"),
+            close=PlainTextObject(text="Cancel"),
+            private_metadata=channel_id, # Pass channel_id for the submission handler
+            blocks=[
+                SectionBlock(
+                    text=PlainTextObject(text="Review the enhanced message below. You can edit it before sending.")
+                ),
+                InputBlock(
+                    block_id="enhanced_text_block",
+                    element=PlainTextInputElement(
+                        action_id="enhanced_text_input",
+                        multiline=True,
+                        initial_value=enhanced_message
+                    ),
+                    label=PlainTextObject(text="Client-Ready Message"),
+                ),
+            ]
+        )
+
+        # --- 3. Update the existing modal with the final content ---
+        web_client.views_update(
+            view_id=view_id,
+            view=final_view
+        )
+
+    except Exception as e:
+        logging.error(f"Error updating modal view: {e}")
+        # Optionally, update the modal to show an error
+        error_view = View(
+            type="modal",
+            title=PlainTextObject(text="Error"),
+            close=PlainTextObject(text="Close"),
+            blocks=[SectionBlock(text=f"Sorry, an error occurred: {e}")]
+        )
+        try:
+            web_client.views_update(view_id=view_id, view=error_view)
+        except Exception as update_err:
+            logging.error(f"Failed to update modal with error message: {update_err}")
+# In main_whatsapp.py
+# REPLACE your old function with this one
+
+# In main_whatsapp.py
+# REPLACE your command handler with this new version
+
+def handle_enhance_command_socket_mode(client: SocketModeClient, req, web_client: WebClient):
+    """Handles the /enhance command by INSTANTLY opening a loading modal."""
+    client.send_socket_mode_response({"envelope_id": req.envelope_id})
+
+    if req.payload.get("command") == "/enhance":
+        data = req.payload
+        trigger_id = data.get('trigger_id')
+        channel_id = data.get('channel_id')
+        user_id = data.get('user_id')
+        raw_draft = data.get('text')
+
+        try:
+            # 1. Create a simple "loading" view
+            loading_view = View(
+                type="modal",
+                callback_id="enhance_modal_submission", # Callback ID is still needed for the final view
+                title=PlainTextObject(text="Enhancing..."),
+                close=PlainTextObject(text="Cancel"),
+                blocks=[
+                    SectionBlock(text="Please wait while I enhance your message with Gemini... 🤖")
+                ]
+            )
+
+            # 2. Open the loading view IMMEDIATELY. This is the key change.
+            view_response = web_client.views_open(
+                trigger_id=trigger_id,
+                view=loading_view
+            )
+            
+            # 3. Get the view_id from the response. We need this to update the modal later.
+            view_id = view_response.get("view", {}).get("id")
+
+            # 4. Get bot_user_id for context formatting
+            auth_response = web_client.auth_test()
+            bot_user_id = auth_response.get("user_id")
+
+            # 5. Start the background thread, passing the new view_id
+            thread = threading.Thread(
+                target=process_and_update_modal, # Note the function name change
+                args=(channel_id, raw_draft, bot_user_id, view_id, web_client.token)
+            )
+            thread.start()
+
+        except SlackApiError as e:
+            logging.error(f"Error opening loading modal: {e.response['error']}")
+# In main_whatsapp.py
+# ADD this new function to handle the "Send" button click
+
+def handle_modal_submission(client: SocketModeClient, req, web_client: WebClient):
+    """Handles the submission of the 'enhance' modal."""
+    # An empty response is a special instruction to close the modal.
+    client.send_socket_mode_response({"envelope_id": req.envelope_id})
+
+    payload = req.payload
+    # 1. Check if this is the submission from our specific modal
+    if payload.get("type") == "view_submission" and payload.get("view", {}).get("callback_id") == "enhance_modal_submission":
+        
+        # 2. Extract the data we need
+        # Get the channel_id we stored in the metadata
+        channel_id = payload.get("view", {}).get("private_metadata", "")
+        
+        # Get the state of the input block
+        view_state = payload.get("view", {}).get("state", {}).get("values", {})
+        
+        # Extract the final text from the input block using the IDs we defined
+        final_message = view_state.get("enhanced_text_block", {}).get("enhanced_text_input", {}).get("value")
+
+        if not channel_id or not final_message:
+            logging.error("Could not extract channel_id or message from modal submission.")
+            return
+
+        # 3. Post the final message to the original channel
+        try:
+            web_client.chat_postMessage(
+                channel=channel_id,
+                text=final_message
+                # Note: The message will be posted by your bot.
+            )
+            logging.info(f"Successfully posted enhanced message to channel {channel_id}")
+        except Exception as e:
+            logging.error(f"Failed to post message from modal to {channel_id}: {e}")
+
+def handle_slack_delete_event(client: SocketModeClient, req, web_client: WebClient):
+    """Handle when a message is deleted in Slack"""
+    client.send_socket_mode_response({"envelope_id": req.envelope_id})
+    event = req.payload.get("event", {})
+    
+    # Check if this is a message deletion event
+    if event.get("type") == "message" and event.get("subtype") == "message_deleted":
+        deleted_ts = event.get("previous_message", {}).get("ts")
+        channel_id = event.get("channel")
+        
+        logging.info(f"🗑️ SLACK DELETE DETECTED - TS: {deleted_ts}, Channel: {channel_id}")
+        
+        # Check if we have a WhatsApp message ID mapped to this Slack message
+        if deleted_ts in slack_to_whatsapp_msg_map:
+            whatsapp_msg_id = slack_to_whatsapp_msg_map[deleted_ts]
+            logging.info(f"🗑️ Attempting to delete corresponding WhatsApp message: {whatsapp_msg_id}")
+            
+            # Delete the WhatsApp message
+            if delete_whatsapp_message(whatsapp_msg_id):
+                logging.info(f"✅ Successfully deleted WhatsApp message: {whatsapp_msg_id}")
+                # Remove from mapping
+                del slack_to_whatsapp_msg_map[deleted_ts]
+            else:
+                logging.error(f"❌ Failed to delete WhatsApp message: {whatsapp_msg_id}")
+        else:
+            logging.info(f"ℹ️ No WhatsApp message mapping found for Slack TS: {deleted_ts}")
+    else:
+        logging.debug(f"ℹ️ Ignoring non-delete event: {event.get('type')}, {event.get('subtype')}")
+
 
 def handle_slack_message(client: SocketModeClient, req, web_client: WebClient):
     client.send_socket_mode_response({"envelope_id": req.envelope_id})
     event = req.payload.get("event", {})
     event_id = (event.get("channel"), event.get("ts"))
    
-    # This filter is correct.
-    if event.get("type") != "message" or event.get("bot_id") or (event.get("subtype") and event.get("subtype") != "file_share"):
+    # MODIFIED FILTER - Allow messages from your specific bot
+    if (event.get("type") != "message" or 
+        (event.get("bot_id") and event.get("bot_id") != "B09BJQ8HBNZ") or  # ← Your Bot User ID
+        (event.get("subtype") and event.get("subtype") != "file_share")):
         return
     
     channel_id, ts = event.get("channel"), event.get("ts")
@@ -245,7 +534,6 @@ def handle_slack_message(client: SocketModeClient, req, web_client: WebClient):
             thread = threading.Thread(target=process_slack_to_whatsapp, args=(event, web_client.token))
             active_threads.append(thread)
             thread.start()
-
 # The definitive, rebuilt version for main_whatsapp.py
 
 # The simplified, stable version for main_whatsapp.py
@@ -266,7 +554,22 @@ def process_slack_to_whatsapp(event, bot_token):
                 logging.warning(f"Thread exiting: Channel {channel_id} not in mapping.")
                 return
             mapping = slack_to_whatsapp_map[channel_id]
-        
+
+        # Two-way blocking: check paused status
+        if mapping.get('paused', False):
+            logging.info(f"Channel {channel_id} is paused. Blocking Slack-to-WhatsApp message.")
+            web_client = WebClient(token=bot_token)
+            try:
+                web_client.chat_postMessage(
+                    channel=channel_id,
+                    thread_ts=slack_ts,
+                    text="*Info:* This channel is currently paused. Outgoing Slack messages are not forwarded to WhatsApp.",
+                    username="Bitlink Bridge Info"
+                )
+            except Exception as e:
+                logging.error(f"Failed to post paused info message to Slack: {e}")
+            return
+
         whatsapp_chat_id = mapping["whatsapp_chat_id"]
         client_name = mapping["client_name"]
         text_caption = event.get("text", "")
@@ -340,12 +643,25 @@ def process_slack_to_whatsapp(event, bot_token):
 
         # --- Case 2: The message is text-only (100% UNCHANGED) ---
         else:
-            response = send_whatsapp_message(whatsapp_chat_id, text_caption, None)
+            # Clean Slack link formatting before forwarding
+            cleaned_text = clean_slack_links(text_caption)
+            response = send_whatsapp_message(whatsapp_chat_id, cleaned_text, None)
+            web_client = WebClient(token=bot_token)
             if response and response.get("success"):
                 slack_to_whatsapp_msg_map[slack_ts] = response.get("messageId")
                 logging.info(f"Forwarded Slack text message to WhatsApp user '{client_name}'")
             else:
-                logging.error(f"Failed to forward Slack text message to WhatsApp user '{client_name}'.")
+                error_msg = response.get('error', 'Unknown error') if response else 'No response from WhatsApp service.'
+                logging.error(f"Failed to forward Slack text message to WhatsApp user '{client_name}'. Reason: {error_msg}")
+                try:
+                    web_client.chat_postMessage(
+                        channel=channel_id,
+                        thread_ts=slack_ts,
+                        text=f"🔴 Failed to forward this message to WhatsApp. Reason: {error_msg}",
+                        username="Bitlink Bridge Info"
+                    )
+                except Exception as e:
+                    logging.error(f"Failed to notify Slack thread of WhatsApp send error: {e}")
 
     except Exception as e:
         logging.error(f"A critical error occurred in process_slack_to_whatsapp: {e}", exc_info=True)
@@ -367,13 +683,13 @@ def run_refresh_server():
     logging.info(f"WhatsApp refresh server listening on port {WHATSAPP_REFRESH_PORT}")
     app.run(host='0.0.0.0', port=int(WHATSAPP_REFRESH_PORT))
 
-# In main_whatsapp.py
 
-# In main_whatsapp.py, replace your main() function with this one.
+    
 
-# In main_whatsapp.py
+    
 
-# In main_whatsapp.py, replace your main() function with this one.
+
+
 
 def main():
     reload_config() 
@@ -385,11 +701,18 @@ def main():
     refresh_server_thread = threading.Thread(target=run_refresh_server)
     refresh_server_thread.daemon = True
     refresh_server_thread.start()
-    
+    socket_client.socket_mode_request_listeners.append(
+        lambda client, req: handle_enhance_command_socket_mode(client, req, web_client)
+    )
+    socket_client.socket_mode_request_listeners.append(
+        lambda client, req: handle_slack_delete_event(client, req, web_client)
+    )
     socket_client.socket_mode_request_listeners.append(
         lambda client, req: handle_slack_message(client, req, web_client)
     )
-    
+    socket_client.socket_mode_request_listeners.append(
+        lambda client, req: handle_modal_submission(client, req, web_client)
+    )
     logging.info("Connecting to Slack and entering listener loop...")
     socket_client.connect()
     

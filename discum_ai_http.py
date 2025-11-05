@@ -19,7 +19,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 DISCORD_USER_AGENT = os.getenv("DISCORD_USER_AGENT", "Mozilla/5.0")
 # --- NEW: Port for this bridge's refresh server ---
-DISCORD_REFRESH_PORT = int(os.getenv("DISCORD_REFRESH_PORT", 8002))
+DISCORD_REFRESH_PORT = int(os.getenv("DISCORD_REFRESH_PORT", 8102))
 
 slack_client = AsyncWebClient(token=SLACK_BOT_TOKEN)
 bot = discum.Client(token=DISCORD_TOKEN, log=False)
