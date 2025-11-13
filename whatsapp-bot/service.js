@@ -417,6 +417,28 @@ app.post('/delete-message', async (req, res) => {
     }
 });
 
+// --- Edit a WhatsApp message ---
+app.post("/edit-message", async (req, res) => {
+    const { messageId, newText } = req.body;
+
+    try {
+        if (!messageId || !newText) {
+            return res.status(400).json({ success: false, error: "Missing messageId or newText" });
+        }
+
+        const message = await client.getMessageById(messageId);
+        if (!message) {
+            return res.status(404).json({ success: false, error: "Message not found" });
+        }
+
+        await message.edit(newText);
+        res.json({ success: true });
+    } catch (err) {
+        console.error("Error editing message:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // Get chat info endpoint (useful for debugging)
 app.get('/chat-info/:chatId', async (req, res) => {
     const { chatId } = req.params;
@@ -456,6 +478,7 @@ app.listen(PORT, () => {
     console.log('   GET  /get-messages - Retrieve queued messages');
     console.log('   POST /send-message - Send a message');
     console.log('   POST /delete-message - Delete a message');
+    console.log('   POST /edit-message - Edit a message');
     console.log('   GET  /chat-info/:chatId - Get chat information');
 });
 
@@ -478,4 +501,18 @@ process.on('SIGTERM', async () => {
         await client.destroy();
     }
     process.exit(0);
+});
+
+// --- WhatsApp message edit event: notify Python bridge ---
+client.on('message_edit', async (msg, newBody, prevBody) => {
+    console.log(`[EDIT DETECTED] ${msg.from}: "${prevBody}" → "${newBody}"`);
+    try {
+        // Call back to your Python bridge to notify it of the edit
+        await axios.post('http://127.0.0.1:8101/whatsapp-edit', {
+            messageId: msg.id._serialized, // WhatsApp message ID
+            newText: newBody,
+        });
+    } catch (err) {
+        console.error('Failed to notify bridge about edit:', err.message);
+    }
 });

@@ -10,7 +10,7 @@ import threading
 import subprocess
 import string
 import google.generativeai as genai
-from flask import request, jsonify 
+from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from slack_sdk import WebClient
 from slack_sdk.socket_mode import SocketModeClient
@@ -45,6 +45,7 @@ NODE_API_URL = os.getenv("NODE_API_URL", "http://127.0.0.1:3101")
 WHATSAPP_REFRESH_PORT = os.getenv("WHATSAPP_REFRESH_PORT", 8101)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+app = Flask(__name__)
 # --- Global State Variables ---
 config_lock = threading.Lock()
 stop_event = threading.Event()
@@ -137,10 +138,8 @@ def process_enhancement_in_background(channel_id, user_id, raw_draft, bot_user_i
     try:
         history_response = web_client.conversations_history(channel=channel_id, limit=5)
         chat_history = format_chat_history(history_response.get('messages', []), bot_user_id)
-        
         # This function call NO LONGER passes the project context
         enhanced_message = get_enhanced_message(chat_history, raw_draft)
-        
         web_client.chat_postEphemeral(
             channel=channel_id,
             user=user_id,
@@ -200,6 +199,46 @@ def delete_whatsapp_message(message_id):
     except requests.exceptions.RequestException as e:
         logging.error(f"Error deleting WhatsApp message: {e}")
     return False
+
+
+# --- WhatsApp Edit Message Function ---
+def edit_whatsapp_message(message_id, new_text):
+    """Send a request to the Node.js service to edit a WhatsApp message."""
+    try:
+        payload = {"messageId": message_id, "newText": new_text}
+        response = requests.post(f"{NODE_API_URL}/edit-message", json=payload)
+        if response.status_code == 200 and response.json().get("success"):
+            logging.info(f"✅ WhatsApp message {message_id} updated successfully.")
+            return True
+        else:
+            logging.error(f"❌ Failed to update WhatsApp message {message_id}. Response: {response.text}")
+            return False
+    except Exception as e:
+        logging.error(f"Error editing WhatsApp message: {e}")
+        return False
+
+# --- Slack Edit Event Handler ---
+def handle_slack_edit_event(client: SocketModeClient, req, web_client: WebClient):
+    """Handle Slack message edit events and update WhatsApp messages if mapped."""
+    client.send_socket_mode_response({"envelope_id": req.envelope_id})
+    event = req.payload.get("event", {})
+    if event.get("type") == "message" and event.get("subtype") == "message_changed":
+        channel_id = event.get("channel")
+        new_text = event.get("message", {}).get("text", "")
+        slack_ts = event.get("message", {}).get("ts")
+        if not (channel_id and slack_ts and new_text):
+            return
+        # Look up WhatsApp message ID
+        whatsapp_msg_id = slack_to_whatsapp_msg_map.get(slack_ts)
+        if whatsapp_msg_id:
+            logging.info(f"✏️ Slack message edited → editing WhatsApp message {whatsapp_msg_id}")
+            success = edit_whatsapp_message(whatsapp_msg_id, new_text)
+            if success:
+                logging.info(f"✅ WhatsApp message {whatsapp_msg_id} updated successfully.")
+            else:
+                logging.error(f"❌ Failed to update WhatsApp message {whatsapp_msg_id}.")
+        else:
+            logging.info(f"ℹ️ No WhatsApp mapping found for edited Slack message {slack_ts}.")
 
 # --- Core Logic ---
 
@@ -684,12 +723,39 @@ def run_refresh_server():
     app.run(host='0.0.0.0', port=int(WHATSAPP_REFRESH_PORT))
 
 
-    
+# --- Flask endpoint for WhatsApp→Slack edit sync ---
+from flask import request
 
-    
-
-
-
+@app.route('/whatsapp-edit', methods=['POST'])
+def whatsapp_edit_endpoint():
+    data = request.get_json(force=True)
+    message_id = data.get('messageId')
+    new_text = data.get('newText')
+    if not message_id or not new_text:
+        return jsonify({'success': False, 'error': 'Missing messageId or newText'}), 400
+    # Find the Slack message TS for this WhatsApp message
+    slack_ts = None
+    slack_channel = None
+    for ts, wa_id in slack_to_whatsapp_msg_map.items():
+        if wa_id == message_id:
+            slack_ts = ts
+            # Find the channel for this TS
+            for channel, mapping in slack_to_whatsapp_map.items():
+                if mapping and ts in slack_to_whatsapp_msg_map:
+                    slack_channel = channel
+                    break
+            break
+    if not slack_ts or not slack_channel:
+        logging.warning(f"No Slack mapping found for WhatsApp message {message_id}")
+        return jsonify({'success': False, 'error': 'No Slack mapping found'}), 404
+    try:
+        web_client = WebClient(token=SLACK_BOT_TOKEN)
+        web_client.chat_update(channel=slack_channel, ts=slack_ts, text=new_text)
+        logging.info(f"✅ Updated Slack message {slack_ts} with new WhatsApp text.")
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Failed to update Slack message: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 def main():
     reload_config() 
@@ -712,6 +778,9 @@ def main():
     )
     socket_client.socket_mode_request_listeners.append(
         lambda client, req: handle_modal_submission(client, req, web_client)
+    )
+    socket_client.socket_mode_request_listeners.append(
+        lambda client, req: handle_slack_edit_event(client, req, web_client)
     )
     logging.info("Connecting to Slack and entering listener loop...")
     socket_client.connect()

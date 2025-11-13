@@ -1,14 +1,39 @@
-2025/11/05-17:19:20.929 5c60 Reusing MANIFEST C:\Users\user\Desktop\bitlink-github\whatsapp-bot\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
-2025/11/05-17:19:20.933 5c60 Recovering log #534
-2025/11/05-17:19:21.263 5c60 Reusing old log C:\Users\user\Desktop\bitlink-github\whatsapp-bot\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000534.log 
-2025/11/05-17:19:27.956 3780 Level-0 table #554: started
-2025/11/05-17:19:28.060 3780 Level-0 table #554: 1069290 bytes OK
-2025/11/05-17:19:28.063 3780 Delete type=0 #534
-2025/11/05-17:19:28.065 3780 Manual compaction at level-0 from '\x00!\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00"\x00\x00\x00' @ 0 : 0; will stop at '\x00!\x00\x00\x05' @ 2740227 : 1
-2025/11/05-17:19:28.065 3780 Compacting 1@0 + 0@1 files
-2025/11/05-17:19:28.390 3780 Generated table #555@0: 13873 keys, 278111 bytes
-2025/11/05-17:19:28.517 3780 Generated table #556@0: 233 keys, 7022 bytes
-2025/11/05-17:19:28.517 3780 Compacted 1@0 + 0@1 files => 285133 bytes
-2025/11/05-17:19:28.598 3780 compacted to: files[ 0 2 15 0 0 0 0 ]
-2025/11/05-17:19:28.599 3780 Delete type=2 #554
-2025/11/05-17:19:28.599 3780 Manual compaction at level-0 from '\x00!\x00\x00\x05' @ 2740227 : 1 .. '\x00"\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/11/13-19:07:07.633 5aac Reusing MANIFEST C:\Users\user\Desktop\bitlink-github\whatsapp-bot\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/11/13-19:07:07.651 5aac Recovering log #639
+2025/11/13-19:07:07.710 5aac Reusing old log C:\Users\user\Desktop\bitlink-github\whatsapp-bot\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000639.log 
+2025/11/13-19:07:21.450 5190 Level-0 table #655: started
+2025/11/13-19:07:21.489 5190 Level-0 table #655: 204589 bytes OK
+2025/11/13-19:07:21.493 5190 Delete type=0 #639
+2025/11/13-19:07:21.494 5190 Manual compaction at level-0 from '\x00\x1e\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x1f\x00\x00\x00' @ 0 : 0; will stop at '\x00\x1e\x00\x00\x05' @ 2919753 : 1
+2025/11/13-19:07:21.494 5190 Compacting 1@0 + 1@1 files
+2025/11/13-19:07:21.538 5190 Generated table #656@0: 2099 keys, 69718 bytes
+2025/11/13-19:07:21.585 5190 Generated table #657@0: 5370 keys, 107553 bytes
+2025/11/13-19:07:21.585 5190 Compacted 1@0 + 1@1 files => 177271 bytes
+2025/11/13-19:07:21.588 5190 compacted to: files[ 0 2 15 0 0 0 0 ]
+2025/11/13-19:07:21.589 5190 Delete type=2 #655
+2025/11/13-19:07:21.590 5190 Manual compaction at level-0 from '\x00\x1e\x00\x00\x05' @ 2919753 : 1 .. '\x00\x1f\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/11/13-19:07:28.229 5190 Compacting 1@1 + 10@2 files
+2025/11/13-19:07:28.618 5190 Generated table #658@1: 65027 keys, 2237126 bytes
+2025/11/13-19:07:28.741 5190 Generated table #659@1: 12667 keys, 2157723 bytes
+2025/11/13-19:07:28.856 5190 Generated table #660@1: 2704 keys, 2149695 bytes
+2025/11/13-19:07:28.952 5190 Generated table #661@1: 2780 keys, 2146072 bytes
+2025/11/13-19:07:29.027 5190 Generated table #662@1: 4661 keys, 2146019 bytes
+2025/11/13-19:07:29.295 5190 Generated table #663@1: 34851 keys, 2257727 bytes
+2025/11/13-19:07:29.457 5190 Generated table #664@1: 21794 keys, 2203684 bytes
+2025/11/13-19:07:29.816 5190 Generated table #665@1: 1956 keys, 2118233 bytes
+2025/11/13-19:07:29.946 5190 Generated table #666@1: 3835 keys, 2118752 bytes
+2025/11/13-19:07:30.315 5190 Generated table #667@1: 106459 keys, 2210641 bytes
+2025/11/13-19:07:30.315 5190 Compacted 1@1 + 10@2 files => 21745672 bytes
+2025/11/13-19:07:30.318 5190 compacted to: files[ 0 1 15 0 0 0 0 ]
+2025/11/13-19:07:30.319 5190 Delete type=2 #642
+2025/11/13-19:07:30.319 5190 Delete type=2 #643
+2025/11/13-19:07:30.319 5190 Delete type=2 #644
+2025/11/13-19:07:30.319 5190 Delete type=2 #645
+2025/11/13-19:07:30.319 5190 Delete type=2 #646
+2025/11/13-19:07:30.319 5190 Delete type=2 #647
+2025/11/13-19:07:30.319 5190 Delete type=2 #648
+2025/11/13-19:07:30.319 5190 Delete type=2 #649
+2025/11/13-19:07:30.319 5190 Delete type=2 #650
+2025/11/13-19:07:30.320 5190 Delete type=2 #651
+2025/11/13-19:07:30.320 5190 Delete type=2 #652
+2025/11/13-19:07:30.320 5190 Delete type=2 #656
