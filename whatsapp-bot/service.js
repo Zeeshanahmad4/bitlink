@@ -296,7 +296,7 @@ app.get('/get-messages', (req, res) => {
 // The simplified, stable version for service.js
 
 app.post('/send-message', async (req, res) => {
-    const { chatId, message, media } = req.body;
+    const { chatId, message, media, mentions } = req.body;
 
     const currentState = await client.getState();
     if (currentState !== 'CONNECTED') {
@@ -315,6 +315,44 @@ app.post('/send-message', async (req, res) => {
             throw new Error(`Chat not found for ID: ${chatId}`);
         }
 
+        let mentionContacts = [];
+        if (mentions && Array.isArray(mentions) && chat.isGroup) {
+            console.log("🔍 Mentions received from Python:", mentions);
+            const participants = chat.participants || [];
+            console.log("🔍 Group participants:", participants.map(p => p.id._serialized));
+            if (participants.length > 0) {
+                console.log("🔍 DEBUG - First participant structure:", JSON.stringify(participants[0], null, 2));
+            }
+            // Extract phone numbers from mention IDs
+            const mentionNumbers = mentions.map(m => m.split('@')[0]);
+            mentionContacts = participants
+                .filter(p => p && p.id && p.id._serialized)
+                .filter(p => {
+                    const participantNumber = p.id._serialized.split('@')[0];
+                    return mentionNumbers.includes(participantNumber);
+                })
+                .map(p => {
+                    // Safely get the serialized ID
+                    if (p && p.id && p.id._serialized) {
+                        return p.id._serialized;
+                    }
+                    // If structure is different, try alternative access
+                    if (p && p._serialized) {
+                        return p._serialized;
+                    }
+                    if (p && typeof p === 'string') {
+                        return p;
+                    }
+                    console.warn("⚠️ Could not extract ID from participant:", p);
+                    return null;
+                })
+                .filter(id => id !== null); // Remove any null entries
+        }
+
+        // DEBUG: Log what we're sending
+        console.log(`💬 Sending text to ${chatId}: "${message?.substring(0, 50)}${message?.length > 50 ? '...' : ''}"`);
+        console.log(`💬 With ${mentionContacts.length} mentions:`, mentionContacts);
+
         let sentMessage;
 
         if (media && media.data) {
@@ -330,33 +368,37 @@ app.post('/send-message', async (req, res) => {
             if (isProblematicAudio) {
                 console.log(`🎵 Sending audio file as document: ${media.filename}`);
                 const mediaFile = new MessageMedia('application/octet-stream', media.data, media.filename);
-                sentMessage = await chat.sendMessage(mediaFile, { caption: message || `🎵 Audio file: ${media.filename}` });
+                sentMessage = await chat.sendMessage(mediaFile, { caption: message || `🎵 Audio file: ${media.filename}`, mentions: mentionContacts });
             } else {
                 console.log(`📎 Sending regular media file: ${media.filename}`);
                 const mediaFile = new MessageMedia(media.mimetype, media.data, media.filename);
-                sentMessage = await chat.sendMessage(mediaFile, { caption: message });
+                sentMessage = await chat.sendMessage(mediaFile, { caption: message, mentions: mentionContacts });
             }
             
             console.log(`✅ Successfully sent media message to ${chatId}`);
         } else {
-            sentMessage = await chat.sendMessage(message);
+            sentMessage = await chat.sendMessage(message, {
+                mentions: mentionContacts
+            });
             console.log(`💬 Successfully sent text message to ${chatId}`);
         }
+    // --- END MENTION PATCH ---
+    // Only one success log is needed, already logged above
 
-        // ✅✅✅ THIS IS THE CRITICAL MISSING PART ✅✅✅
-        res.status(200).json({
-            success: true,
-            messageId: sentMessage.id._serialized,
-            timestamp: sentMessage.timestamp
-        });
+    // ✅✅✅ THIS IS THE CRITICAL MISSING PART ✅✅✅
+    res.status(200).json({
+        success: true,
+        messageId: sentMessage.id._serialized,
+        timestamp: sentMessage.timestamp
+    });
 
-    } catch (error) {
-        console.error(`❌ Failed to send message to ${chatId}:`, error);
-        res.status(500).json({
-            success: false,
-            error: error.toString()
-        });
-    }
+  } catch (error) {
+    console.error(`❌ Failed to send message to ${chatId}:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.toString()
+    });
+  }
 });
 // Delete message endpoint
 app.post('/delete-message', async (req, res) => {

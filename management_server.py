@@ -9,7 +9,8 @@ import json
 from flask import Flask, request, jsonify
 from slack_sdk.signature import SignatureVerifier
 from dotenv import load_dotenv
-
+from slack_log_handler import setup_slack_logging
+setup_slack_logging()
 load_dotenv()
 app = Flask(__name__)
 

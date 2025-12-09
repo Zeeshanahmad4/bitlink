@@ -1,2 +1,3 @@
-2025/11/10-11:05:04.072 430 Creating DB C:\Users\user\Desktop\bitlink-github\whatsapp-bot\.wwebjs_auth\session\Default\shared_proto_db\metadata since it was missing.
-2025/11/10-11:05:04.121 430 Reusing MANIFEST C:\Users\user\Desktop\bitlink-github\whatsapp-bot\.wwebjs_auth\session\Default\shared_proto_db\metadata/MANIFEST-000001
+2025/12/04-18:42:00.217 1f70 Reusing MANIFEST C:\Users\user\Desktop\bitlink-github\whatsapp-bot\.wwebjs_auth\session\Default\shared_proto_db\metadata/MANIFEST-000001
+2025/12/04-18:42:00.223 1f70 Recovering log #3
+2025/12/04-18:42:00.225 1f70 Reusing old log C:\Users\user\Desktop\bitlink-github\whatsapp-bot\.wwebjs_auth\session\Default\shared_proto_db\metadata/000003.log 

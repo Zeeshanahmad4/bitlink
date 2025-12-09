@@ -1,5 +1,4 @@
-# main_whatsapp.py - DEFINITIVE VERSION WITH ALL FIXES AND CLEAN NOTIFICATIONS
-
+# main_whatsapp.py
 import time
 import requests
 import os
@@ -21,6 +20,7 @@ from slack_sdk.models.views import View
 from slack_sdk.models.blocks import InputBlock, SectionBlock, PlainTextObject
 from slack_sdk.models.blocks import PlainTextInputElement, InputBlock, SectionBlock
 
+
 from g_sheets_client import get_client_mappings
 # Convert MB to bytes for easy comparison
 MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE_MB", 50)) * 1024 * 1024
@@ -37,7 +37,10 @@ if '--env' in sys.argv:
 else:
     load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s', datefmt='%Y-%m-%d %H:%M:%S',handlers=[
+        logging.FileHandler("main_whatsapp3.log"),
+        logging.StreamHandler()
+    ])
 
 SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
@@ -85,12 +88,10 @@ IMPORTANT RULES:
 	•	The output should be only the client-ready message itself—clean, direct, and ready to paste straight into the chat thread without any added explanation or wrapper.
 """
 
-# PASTE THESE THREE FUNCTIONS HERE
-
 def format_chat_history(messages, bot_user_id):
     """Formats Slack message history into a clean 'Me:' and 'Client:' format for the AI."""
     history = []
-    for msg in reversed(messages):  # reverse to get chronological order
+    for msg in reversed(messages):  
         user_name = "Client"
         # Check if the message is from our team (the bot/bridge)
         if 'bot_id' in msg or msg.get('user') == bot_user_id:
@@ -104,23 +105,16 @@ def format_chat_history(messages, bot_user_id):
         if text:
             history.append(f"{user_name}: {text}")
     return "\n".join(history)
-
-# PASTE THIS ENTIRE FUNCTION. IT CONTAINS THE HARDCODED KEY FOR TESTING.
-
-# PASTE THIS FINAL, CORRECTED FUNCTION.
-
-# PASTE THIS SIMPLIFIED VERSION of get_enhanced_message
    
     
 def get_enhanced_message(chat_history, raw_draft):
     """Calls the Google Gemini API to get the rewritten message without project context."""
     try:
-        # If you hardcoded your key for testing, it would go here.
-        # Otherwise, this uses the key from your .env file.
+        
         genai.configure(api_key="AIzaSyA6PymEguEq_HpR1enCnDJORNZkQsXR51E")
         model = genai.GenerativeModel('gemini-pro-latest')
         
-        # This is the new, simplified prompt without the project context
+        
         final_prompt = f"{MASTER_PROMPT}\n\n---\nHi, I want to prepare a client message. Below I’m sharing:\n\n1. Previous chat with the client:\n---\n{chat_history}\n---\n\n2. My raw draft or bullet points of what I want to say next:\n---\n{raw_draft}\n---"
         
         response = model.generate_content(final_prompt)
@@ -130,15 +124,12 @@ def get_enhanced_message(chat_history, raw_draft):
         logging.error(f"Google Gemini API call failed: {e}")
         return f"Sorry, I couldn't enhance the message using Gemini. Error: {e}"
 
-# PASTE THIS UPDATED VERSION of process_enhancement_in_background
-
 def process_enhancement_in_background(channel_id, user_id, raw_draft, bot_user_id, web_client_token):
     """Fetches history, calls AI, and sends the private reply. Runs in a background thread."""
     web_client = WebClient(token=web_client_token)
     try:
         history_response = web_client.conversations_history(channel=channel_id, limit=5)
         chat_history = format_chat_history(history_response.get('messages', []), bot_user_id)
-        # This function call NO LONGER passes the project context
         enhanced_message = get_enhanced_message(chat_history, raw_draft)
         web_client.chat_postEphemeral(
             channel=channel_id,
@@ -155,15 +146,43 @@ def process_enhancement_in_background(channel_id, user_id, raw_draft, bot_user_i
 
 
 
-# --- Helper Functions ---
+
 import re
 
-# --- Slack Link Cleaner ---
+
 def clean_slack_links(text):
     """Replace any Slack link format <scheme:...|display> with display text only."""
     # Handles http, https, mailto, and any other scheme
     return re.sub(r'<[^|>]+\|([^>]+)>', r'\1', text)
 
+def extract_wa_mentions(text):
+    """
+    Extract WhatsApp mention IDs from Slack message text.
+    Supports both @number and @name mentions.
+    Looks up WhatsApp IDs for names using Google Sheet.
+    """
+    # 1. Extract @number mentions (e.g., @923001234567)
+    numbers = re.findall(r'@([0-9]{10,15})', text)
+    mention_ids = [f"{n}@c.us" for n in numbers]
+
+    # 2. Extract @name mentions (e.g., @Ali)
+    names = re.findall(r'@([A-Za-z][A-Za-z0-9_\-]+)', text)
+    # Remove any numbers accidentally picked up as names
+    names = [n for n in names if not re.match(r'^[0-9]{10,15}$', n)]
+
+    # 3. Lookup WhatsApp IDs for names using Google Sheet
+    if names:
+        try:
+            from g_sheets_client import get_client_mappings
+            client_mappings = get_client_mappings("WhatsApp")
+            name_to_id = {c.get("client_name"): sanitize_id(c.get("external_id")) for c in client_mappings if c.get("client_name") and c.get("external_id")}
+            for name in names:
+                wa_id = name_to_id.get(name)
+                if wa_id:
+                    mention_ids.append(wa_id)
+        except Exception as e:
+            logging.error(f"Error looking up WhatsApp IDs for names: {e}")
+    return mention_ids
 def sanitize_id(external_id):
     if not external_id: return None
     printable_chars = set(string.printable)
@@ -178,9 +197,13 @@ def get_whatsapp_messages():
         logging.error(f"Error connecting to WhatsApp service: {e}")
     return []
 
-def send_whatsapp_message(chat_id, message, media=None):
+def send_whatsapp_message(chat_id, message, media=None, mentions=None):
+    
     try:
         payload = {"chatId": chat_id, "message": message, "media": media}
+        if mentions:
+            payload["mentions"] = mentions
+        
         response = requests.post(f"{NODE_API_URL}/send-message", json=payload)
         if response and response.status_code == 200:
             return response.json()
@@ -368,12 +391,7 @@ def poll_whatsapp_and_forward(web_client: WebClient):
         time.sleep(0.5)
     logging.info("WhatsApp polling worker is shutting down.")
 
-# PASTE THIS NEW HANDLER FUNCTION HERE
-# In main_whatsapp.py
-# MAKE SURE THIS FUNCTION COMES FIRST
 
-# In main_whatsapp.py
-# REPLACE your old process_and_open_modal with this new function
 
 def process_and_update_modal(channel_id, raw_draft, bot_user_id, view_id, web_client_token):
     """Fetches AI result and then UPDATES the existing 'loading' modal with the final view."""
@@ -427,11 +445,7 @@ def process_and_update_modal(channel_id, raw_draft, bot_user_id, view_id, web_cl
             web_client.views_update(view_id=view_id, view=error_view)
         except Exception as update_err:
             logging.error(f"Failed to update modal with error message: {update_err}")
-# In main_whatsapp.py
-# REPLACE your old function with this one
 
-# In main_whatsapp.py
-# REPLACE your command handler with this new version
 
 def handle_enhance_command_socket_mode(client: SocketModeClient, req, web_client: WebClient):
     """Handles the /enhance command by INSTANTLY opening a loading modal."""
@@ -680,11 +694,43 @@ def process_slack_to_whatsapp(event, bot_token):
                 except Exception as e:
                     logging.error(f"An error occurred while processing a file for '{client_name}': {e}", exc_info=True)
 
-        # --- Case 2: The message is text-only (100% UNCHANGED) ---
+        # --- Case 2: The message is text-only (FIXED FOR MENTIONS) ---
         else:
-            # Clean Slack link formatting before forwarding
-            cleaned_text = clean_slack_links(text_caption)
-            response = send_whatsapp_message(whatsapp_chat_id, cleaned_text, None)
+            # WhatsApp needs @mentions in the text to match mention IDs (must be @number)
+            raw_text = text_caption
+            mention_ids = extract_wa_mentions(raw_text)
+
+            # Replace @name in text with @number (external_id) for WhatsApp mentions
+            # 1. Extract @name mentions
+            name_pattern = r'@([A-Za-z][A-Za-z0-9_\-]+)'
+            names = re.findall(name_pattern, raw_text)
+            # Remove any numbers accidentally picked up as names
+            names = [n for n in names if not re.match(r'^[0-9]{10,15}$', n)]
+
+            # 2. Lookup WhatsApp IDs for names using Google Sheet
+            name_to_id = {}
+            if names:
+                try:
+                    from g_sheets_client import get_client_mappings
+                    client_mappings = get_client_mappings("WhatsApp")
+                    name_to_id = {c.get("client_name"): sanitize_id(c.get("external_id")) for c in client_mappings if c.get("client_name") and c.get("external_id")}
+                except Exception as e:
+                    logging.error(f"Error looking up WhatsApp IDs for names: {e}")
+
+            # 3. Replace @name with @number in the text
+            final_text = raw_text
+            for name in names:
+                wa_id = name_to_id.get(name)
+                if wa_id:
+                    wa_number = wa_id.split('@')[0]
+                    final_text = re.sub(rf'@{name}\b', f'@{wa_number}', final_text)
+
+            # Clean Slack links (but keep @mentions)
+            final_text = clean_slack_links(final_text)
+
+            # Debug logging
+            logging.info(f"📤 WhatsApp sending - Text: '{final_text[:100]}...', Mentions: {mention_ids}")
+            response = send_whatsapp_message(whatsapp_chat_id, final_text, None, mention_ids)
             web_client = WebClient(token=bot_token)
             if response and response.get("success"):
                 slack_to_whatsapp_msg_map[slack_ts] = response.get("messageId")
