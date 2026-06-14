@@ -5,7 +5,7 @@ config.py
 /whatsapp-bot/node_modules
 credentials/
 service_account.json
-
+/wa_gateway
 
 # Environment variables
 .env
@@ -30,3 +30,23 @@ Thumbs.db
 /.venv
 /env
 /.env
+
+# Old env files
+.env2
+.env3
+
+# Python cache
+__pycache__/
+*.pyc
+
+# WhatsApp browser sessions (heavy + sensitive)
+whatsapp-bot/sessions/
+whatsapp-bot/.wwebjs_cache/
+
+# Runtime files
+whatsapp_outbox.jsonl
+sent_whatsapp_alerts.json
+whatsapp-bot/notified_groups.json
+
+# Temp downloads
+temp_downloads_telegram/

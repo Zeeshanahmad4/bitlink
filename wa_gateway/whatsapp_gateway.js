@@ -5,23 +5,39 @@ import qrcode from "qrcode-terminal";
 import pkg from "whatsapp-web.js";
 const { Client, LocalAuth, MessageMedia } = pkg;
 
+function log(...args) {
+    const ts = new Date().toISOString().replace('T', ' ').replace('Z', '');
+    console.log(`[${ts}]`, ...args);
+}
+
 const GATEWAY_SECRET = process.env.GATEWAY_SECRET;
 const HUB_URL = process.env.HUB_URL || "http://127.0.0.1:8000/webhook/whatsapp";
 const PORT = Number(process.env.GW_PORT || 3001);
 
 const client = new Client({
-  authStrategy: new LocalAuth({ clientId: "bitlink" }),
+  authStrategy: new LocalAuth({
+    clientId: "bitlink",
+    dataPath: "./sessions"
+  }),
   puppeteer: {
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    headless: 'new',
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-gpu",
+      "--disable-dev-shm-usage",
+      "--disable-web-security",
+      "--disable-features=VizDisplayCompositor",
+      "--disable-extensions"
+    ],
   },
 });
 
 client.on("qr", (qr) => {
-  console.log("Scan this QR:");
+  log("Scan this QR:");
   qrcode.generate(qr, { small: true });
 });
-client.on("ready", () => console.log("WhatsApp ready ✅"));
+client.on("ready", () => log("WhatsApp ready ✅"));
 
 await client.initialize();
 
@@ -39,7 +55,7 @@ async function postToHub(payload) {
       timeout: 10000,
     });
   } catch (e) {
-    console.error("Hub POST failed:", e?.response?.status || e.message);
+    log("Hub POST failed:", e?.response?.status || e.message);
   }
 }
 
@@ -48,7 +64,7 @@ client.on("message", async (msg) => {
     if (msg.fromMe) return;
     const contact = await msg.getContact();
     const payload = {
-      wa_message_id: msg.id?._serialized || `${msg.id?.id || ""}`,
+      wa_message_id: msg.id._serialized,
       from_number: `+${(msg.from || "").replace(/@.*/, "")}`,
       sender_name:
         contact?.pushname || contact?.name || contact?.number || "Unknown",
@@ -68,7 +84,7 @@ client.on("message", async (msg) => {
     }
     await postToHub(payload);
   } catch (e) {
-    console.error("Inbound WA error:", e.message);
+    log("Inbound WA error:", e.message);
   }
 });
 
@@ -79,15 +95,40 @@ function requireSecret(req, res, next) {
     return res.sendStatus(401);
   next();
 }
-app.get("/health", (_, res) => res.json({ ok: true }));
+app.get("/health", async (_, res) => {
+  try {
+    const state = await client.getState();
+    const isClientReady = (state === 'CONNECTED');
+    res.json({
+      ok: isClientReady,
+      status: isClientReady ? 'ready' : 'not_ready',
+      state: state,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      status: 'error',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
 app.post("/wa/sendText", requireSecret, async (req, res) => {
   const { to, text } = req.body || {};
   if (!to || !text) return res.status(400).send("to + text required");
   try {
+    const state = await client.getState();
+    if (state !== 'CONNECTED') {
+      return res.status(503).json({
+        error: `Client not ready. State: ${state}`,
+        state: state
+      });
+    }
     await client.sendMessage(toChatId(to), text);
     res.sendStatus(200);
   } catch (e) {
-    console.error("sendText error:", e.message);
+    log("sendText error:", e.message);
     res.sendStatus(500);
   }
 });
@@ -96,12 +137,19 @@ app.post("/wa/sendMedia", requireSecret, async (req, res) => {
   if (!to || !mimetype || !data)
     return res.status(400).send("to + mimetype + data required");
   try {
+    const state = await client.getState();
+    if (state !== 'CONNECTED') {
+      return res.status(503).json({
+        error: `Client not ready. State: ${state}`,
+        state: state
+      });
+    }
     const media = new MessageMedia(mimetype, data, filename || "attachment");
     await client.sendMessage(toChatId(to), media, { caption: caption || "" });
     res.sendStatus(200);
   } catch (e) {
-    console.error("sendMedia error:", e.message);
+    log("sendMedia error:", e.message);
     res.sendStatus(500);
   }
 });
-app.listen(PORT, () => console.log(`WA Gateway on :${PORT}`));
+app.listen(PORT, () => log(`WA Gateway on :${PORT}`));

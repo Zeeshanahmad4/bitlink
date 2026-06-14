@@ -15,23 +15,33 @@ puppeteer.use(StealthPlugin());
 const axios = require('axios');
 require('dotenv').config({ path: '../.env' });
 const NOTIFIED_GROUPS_FILE = path.join(__dirname, 'notified_groups.json'); // <-- ADD THIS
-const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL;
+const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
+const SLACK_ADMIN_CHANNEL = process.env.SLACK_ADMIN_CHANNEL_ID;
 const app = express();
 app.use(bodyParser.json({ limit: '50mb' }));
 
-console.log("🚀 Starting WhatsApp Service with Standard Stealth Mode...");
+function log(...args) {
+    const ts = new Date().toISOString().replace('T', ' ').replace('Z', '');
+    console.log(`[${ts}]`, ...args);
+}
+
+log("🚀 Starting WhatsApp Service with Standard Stealth Mode...");
 
 const client = new Client({
-    authStrategy: new LocalAuth(),
+    authStrategy: new LocalAuth({
+        clientId: "bitlink",
+        dataPath: "./sessions"
+    }),
     puppeteer: {
-        headless: true,
+        headless: 'new',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-gpu',
             '--disable-dev-shm-usage',
             '--disable-web-security',
-            '--disable-features=VizDisplayCompositor'
+            '--disable-features=VizDisplayCompositor',
+            '--disable-extensions'
         ],
     }
 });
@@ -40,12 +50,12 @@ let isReady = false;
 
 // --- WhatsApp Client Event Handlers ---
 client.on('qr', (qr) => {
-    console.log('📱 QR code received, please scan in your terminal:');
+    log('📱 QR code received, please scan in your terminal:');
     qrcode.generate(qr, { small: true });
 });
 
 client.on('authenticated', () => {
-    console.log('✅ Authentication successful! Initializing client...');
+    log('✅ Authentication successful! Initializing client...');
 });
 
 // service.js - ADD THIS ENTIRE BLOCK
@@ -53,10 +63,10 @@ client.on('authenticated', () => {
 // --- Proactive Group Discovery on Startup ---
 client.on('ready', async () => {
     isReady = true;
-    console.log('🎉 >>> WhatsApp is ready! <<<');
+    log('🎉 >>> WhatsApp is ready! <<<');
 
     try {
-        console.log('🔍 Performing initial scan for unmapped groups...');
+        log('🔍 Performing initial scan for unmapped groups...');
         const allChats = await client.getChats();
         
         for (const chat of allChats) {
@@ -67,9 +77,9 @@ client.on('ready', async () => {
                 await handleNewGroup(chat);
             }
         }
-        console.log('✅ Initial group scan complete.');
+        log('✅ Initial group scan complete.');
     } catch (error) {
-        console.error('❌ Failed to perform initial group scan:', error);
+        log('❌ Failed to perform initial group scan:', error);
     }
 });
 // service.js - NEW, UNIFIED CODE BLOCK TO PASTE
@@ -88,13 +98,13 @@ const loadNotifiedGroups = () => {
         if (fs.existsSync(NOTIFIED_GROUPS_FILE)) {
             const data = fs.readFileSync(NOTIFIED_GROUPS_FILE, 'utf8');
             const groupIds = JSON.parse(data);
-            console.log(`💾 Loaded ${groupIds.length} previously notified groups from file.`);
+            log(`💾 Loaded ${groupIds.length} previously notified groups from file.`);
             return new Set(groupIds);
         }
     } catch (error) {
-        console.error('❌ Error loading notified groups file. Starting fresh.', error);
+        log('❌ Error loading notified groups file. Starting fresh.', error);
     }
-    console.log('📄 No notified groups file found. A new one will be created.');
+    log('📄 No notified groups file found. A new one will be created.');
     return new Set();
 };
 
@@ -107,7 +117,7 @@ const saveNotifiedGroups = () => {
         const data = JSON.stringify(groupIdsArray, null, 2); // Pretty-prints the JSON
         fs.writeFileSync(NOTIFIED_GROUPS_FILE, data, 'utf8');
     } catch (error) {
-        console.error('❌ CRITICAL: Failed to save notified groups to file!', error);
+        log('❌ CRITICAL: Failed to save notified groups to file!', error);
     }
 };
 // This Set acts as our memory. It is defined here in the global scope.
@@ -131,15 +141,20 @@ const handleNewGroup = async (chat) => {
         // 2. Add to memory IMMEDIATELY to prevent duplicate notifications.
         notifiedGroups.add(groupId);
         saveNotifiedGroups(); 
-        console.log(`🚀 New group detected: "${groupName}" (${groupId}). Sending notification.`);
+        log(`🚀 New group detected: "${groupName}" (${groupId}). Sending notification.`);
 
         // 3. Send the notification to Slack.
-        if (!SLACK_WEBHOOK_URL) {
-            console.error('❌ SLACK_WEBHOOK_URL is not set.');
+        if (!SLACK_BOT_TOKEN) {
+            log('❌ SLACK_BOT_TOKEN is not set.');
+            return;
+        }
+        if (!SLACK_ADMIN_CHANNEL) {
+            log('❌ SLACK_ADMIN_CHANNEL_ID is not set.');
             return;
         }
 
         const slackMessage = {
+            channel: SLACK_ADMIN_CHANNEL,
             text: `BitLink Bot has a new WhatsApp group: *${groupName}*`,
             blocks: [
                 { "type": "section", "text": { "type": "mrkdwn", "text": `🚀 BitLink Bot has a new WhatsApp group: *${groupName}*` } },
@@ -151,11 +166,13 @@ const handleNewGroup = async (chat) => {
                 }
             ]
         };
-        await axios.post(SLACK_WEBHOOK_URL, slackMessage);
-        console.log(`📬 Successfully sent notification to Slack for group "${groupName}".`);
+        await axios.post('https://slack.com/api/chat.postMessage', slackMessage, {
+            headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` }
+        });
+        log(`📬 Successfully sent notification to Slack for group "${groupName}".`);
 
     } catch (error) {
-        console.error(`❌ Failed to process new group notification for chat "${chat.name}":`, error);
+        log(`❌ Failed to process new group notification for chat "${chat.name}":`, error);
     }
 };
 
@@ -184,7 +201,7 @@ client.on('message', async (msg) => {
         }
     }
 
-    // --- Original Message Processing Logic (UNCHANGED) ---
+    // --- Original Message Processing Logic ---
     let quotedBody = null;
     let senderName = null;
 
@@ -192,16 +209,14 @@ client.on('message', async (msg) => {
         try {
             const quotedMsg = await msg.getQuotedMessage();
             if (quotedMsg && quotedMsg.body) { quotedBody = quotedMsg.body; }
-        } catch (error) { console.error("Could not get quoted message:", error); }
+        } catch (error) { log("Could not get quoted message:", error); }
     }
 
-    if (msg.from.endsWith('@g.us')) {
-        try {
-            const contact = await msg.getContact();
-            senderName = contact.name || contact.pushname || contact.number;
-        } catch (error) {
-            console.error("Could not get sender contact from group message:", error);
-        }
+    try {
+        const contact = await msg.getContact();
+        senderName = contact?.pushname || contact?.name || contact?.number || 'Unknown';
+    } catch (error) {
+        log("Could not get sender contact:", error);
     }
 
     const messageData = {
@@ -225,10 +240,10 @@ client.on('message', async (msg) => {
                     data: media.data
                 };
                 messageQueue.push(messageData);
-                console.log(`📎 Media message received from ${msg.from}: ${filename}`);
+                log(`📎 Media message received from ${msg.from}: ${filename}`);
             }
         } catch (error) {
-            console.error("Error downloading media:", error);
+            log("Error downloading media:", error);
             messageData.media = null;
             messageQueue.push(messageData);
         }
@@ -236,16 +251,16 @@ client.on('message', async (msg) => {
         messageData.media = null;
         messageQueue.push(messageData);
     const ts = new Date().toISOString();
-    console.log(`[${ts}] 💬 Text message received from ${msg.from}: ${msg.body.substring(0, 50)}...`);
+    log(`[${ts}] 💬 Text message received from ${msg.from}: ${msg.body.substring(0, 50)}...`);
     }
 });
 client.on('auth_failure', msg => {
-    console.error('❌ AUTHENTICATION FAILURE', msg);
+    log('❌ AUTHENTICATION FAILURE', msg);
     isReady = false;
 });
 
 client.on('disconnected', (reason) => {
-    console.log('🔌 Client was logged out:', reason);
+    log('🔌 Client was logged out:', reason);
     isReady = false;
 });
 
@@ -301,7 +316,7 @@ app.post('/send-message', async (req, res) => {
     const currentState = await client.getState();
     if (currentState !== 'CONNECTED') {
         const errorMsg = `WhatsApp client is not ready. Current state: ${currentState}`;
-        console.error(`❌ Blocked send request: ${errorMsg}`);
+        log(`❌ Blocked send request: ${errorMsg}`);
         return res.status(503).json({ success: false, error: errorMsg });
     }
 
@@ -317,11 +332,11 @@ app.post('/send-message', async (req, res) => {
 
         let mentionContacts = [];
         if (mentions && Array.isArray(mentions) && chat.isGroup) {
-            console.log("🔍 Mentions received from Python:", mentions);
+            log("🔍 Mentions received from Python:", mentions);
             const participants = chat.participants || [];
-            console.log("🔍 Group participants:", participants.map(p => p.id._serialized));
+            log("🔍 Group participants:", participants.map(p => p.id._serialized));
             if (participants.length > 0) {
-                console.log("🔍 DEBUG - First participant structure:", JSON.stringify(participants[0], null, 2));
+                log("🔍 DEBUG - First participant structure:", JSON.stringify(participants[0], null, 2));
             }
             // Extract phone numbers from mention IDs
             const mentionNumbers = mentions.map(m => m.split('@')[0]);
@@ -350,8 +365,8 @@ app.post('/send-message', async (req, res) => {
         }
 
         // DEBUG: Log what we're sending
-        console.log(`💬 Sending text to ${chatId}: "${message?.substring(0, 50)}${message?.length > 50 ? '...' : ''}"`);
-        console.log(`💬 With ${mentionContacts.length} mentions:`, mentionContacts);
+        log(`💬 Sending text to ${chatId}: "${message?.substring(0, 50)}${message?.length > 50 ? '...' : ''}"`);
+        log(`💬 With ${mentionContacts.length} mentions:`, mentionContacts);
 
         let sentMessage;
 
@@ -366,21 +381,21 @@ app.post('/send-message', async (req, res) => {
             );
 
             if (isProblematicAudio) {
-                console.log(`🎵 Sending audio file as document: ${media.filename}`);
+                log(`🎵 Sending audio file as document: ${media.filename}`);
                 const mediaFile = new MessageMedia('application/octet-stream', media.data, media.filename);
                 sentMessage = await chat.sendMessage(mediaFile, { caption: message || `🎵 Audio file: ${media.filename}`, mentions: mentionContacts });
             } else {
-                console.log(`📎 Sending regular media file: ${media.filename}`);
+                log(`📎 Sending regular media file: ${media.filename}`);
                 const mediaFile = new MessageMedia(media.mimetype, media.data, media.filename);
                 sentMessage = await chat.sendMessage(mediaFile, { caption: message, mentions: mentionContacts });
             }
             
-            console.log(`✅ Successfully sent media message to ${chatId}`);
+            log(`✅ Successfully sent media message to ${chatId}`);
         } else {
             sentMessage = await chat.sendMessage(message, {
                 mentions: mentionContacts
             });
-            console.log(`💬 Successfully sent text message to ${chatId}`);
+            log(`💬 Successfully sent text message to ${chatId}`);
         }
     // --- END MENTION PATCH ---
     // Only one success log is needed, already logged above
@@ -393,7 +408,7 @@ app.post('/send-message', async (req, res) => {
     });
 
   } catch (error) {
-    console.error(`❌ Failed to send message to ${chatId}:`, error);
+    log(`❌ Failed to send message to ${chatId}:`, error);
     res.status(500).json({
       success: false,
       error: error.toString()
@@ -419,13 +434,13 @@ app.post('/delete-message', async (req, res) => {
     }
 
     try {
-        console.log(`🗑️  Attempting to delete message: ${messageId}`);
+        log(`🗑️  Attempting to delete message: ${messageId}`);
 
         // Get the message by ID
         const message = await client.getMessageById(messageId);
 
         if (!message) {
-            console.log(`❌ Message ${messageId} not found`);
+            log(`❌ Message ${messageId} not found`);
             return res.status(404).json({
                 success: false,
                 error: 'Message not found or may have been already deleted'
@@ -435,14 +450,14 @@ app.post('/delete-message', async (req, res) => {
         // Delete for everyone (true parameter)
         await message.delete(true);
 
-        console.log(`✅ Successfully deleted message ${messageId}`);
+        log(`✅ Successfully deleted message ${messageId}`);
         res.status(200).json({
             success: true,
             message: 'Message deleted successfully'
         });
 
     } catch (error) {
-        console.error(`❌ Failed to delete message ${messageId}:`, error);
+        log(`❌ Failed to delete message ${messageId}:`, error);
 
         // Provide more specific error messages
         let errorMessage = 'Message could not be deleted';
@@ -476,7 +491,7 @@ app.post("/edit-message", async (req, res) => {
         await message.edit(newText);
         res.json({ success: true });
     } catch (err) {
-        console.error("Error editing message:", err);
+        log("Error editing message:", err);
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -514,23 +529,23 @@ app.get('/chat-info/:chatId', async (req, res) => {
 // --- Start the server ---
 const PORT = process.env.PORT || 3101;
 app.listen(PORT, () => {
-    console.log(`🌐 API server listening at http://localhost:${PORT}`);
-    console.log('📋 Available endpoints:');
-    console.log('   GET  /health - Check service status');
-    console.log('   GET  /get-messages - Retrieve queued messages');
-    console.log('   POST /send-message - Send a message');
-    console.log('   POST /delete-message - Delete a message');
-    console.log('   POST /edit-message - Edit a message');
-    console.log('   GET  /chat-info/:chatId - Get chat information');
+    log(`🌐 API server listening at http://localhost:${PORT}`);
+    log('📋 Available endpoints:');
+    log('   GET  /health - Check service status');
+    log('   GET  /get-messages - Retrieve queued messages');
+    log('   POST /send-message - Send a message');
+    log('   POST /delete-message - Delete a message');
+    log('   POST /edit-message - Edit a message');
+    log('   GET  /chat-info/:chatId - Get chat information');
 });
 
 // --- Initialize WhatsApp Client ---
-console.log('🔄 Initializing WhatsApp client...');
+log('🔄 Initializing WhatsApp client...');
 client.initialize();
 
 // --- Graceful shutdown ---
 process.on('SIGINT', async () => {
-    console.log('\n🛑 Shutting down WhatsApp service...');
+    log('\n🛑 Shutting down WhatsApp service...');
     if (isReady) {
         await client.destroy();
     }
@@ -538,7 +553,7 @@ process.on('SIGINT', async () => {
 });
 
 process.on('SIGTERM', async () => {
-    console.log('\n🛑 Shutting down WhatsApp service...');
+    log('\n🛑 Shutting down WhatsApp service...');
     if (isReady) {
         await client.destroy();
     }
@@ -547,7 +562,7 @@ process.on('SIGTERM', async () => {
 
 // --- WhatsApp message edit event: notify Python bridge ---
 client.on('message_edit', async (msg, newBody, prevBody) => {
-    console.log(`[EDIT DETECTED] ${msg.from}: "${prevBody}" → "${newBody}"`);
+    log(`[EDIT DETECTED] ${msg.from}: "${prevBody}" → "${newBody}"`);
     try {
         // Call back to your Python bridge to notify it of the edit
         await axios.post('http://127.0.0.1:8101/whatsapp-edit', {
@@ -555,6 +570,6 @@ client.on('message_edit', async (msg, newBody, prevBody) => {
             newText: newBody,
         });
     } catch (err) {
-        console.error('Failed to notify bridge about edit:', err.message);
+        log('Failed to notify bridge about edit:', err.message);
     }
 });

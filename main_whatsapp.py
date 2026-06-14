@@ -8,22 +8,28 @@ import base64
 import threading
 import subprocess
 import string
+import re
+from collections import OrderedDict, deque
+from concurrent.futures import ThreadPoolExecutor
+import json
+import pathlib
+import uuid
+
 import google.generativeai as genai
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from slack_sdk import WebClient
 from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.errors import SlackApiError
-from flask import Flask
-from collections import deque
 from slack_sdk.models.views import View
 from slack_sdk.models.blocks import InputBlock, SectionBlock, PlainTextObject
-from slack_sdk.models.blocks import PlainTextInputElement, InputBlock, SectionBlock
-
+from slack_sdk.models.blocks import PlainTextInputElement
 
 from g_sheets_client import get_client_mappings
+
 # Convert MB to bytes for easy comparison
 MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE_MB", 50)) * 1024 * 1024
+
 # --- Environment Setup ---
 if '--env' in sys.argv:
     env_index = sys.argv.index('--env') + 1
@@ -37,10 +43,15 @@ if '--env' in sys.argv:
 else:
     load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s', datefmt='%Y-%m-%d %H:%M:%S',handlers=[
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
         logging.FileHandler("main_whatsapp3.log"),
         logging.StreamHandler()
-    ])
+    ]
+)
 
 SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
@@ -49,15 +60,93 @@ WHATSAPP_REFRESH_PORT = os.getenv("WHATSAPP_REFRESH_PORT", 8101)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 app = Flask(__name__)
+
+
+class BoundedMessageMap:
+    """Bounded message map with TTL and size limits to prevent memory leaks."""
+
+    def __init__(self, max_size=50000, ttl_hours=48):
+        self.map = OrderedDict()
+        self.timestamps = {}
+        self.max_size = max_size
+        self.ttl_seconds = ttl_hours * 3600
+        self.lock = threading.Lock()
+
+    def _purge_expired(self):
+        current_time = time.time()
+        expired_keys = [
+            key for key, timestamp in self.timestamps.items()
+            if current_time - timestamp > self.ttl_seconds
+        ]
+        for key in expired_keys:
+            self.map.pop(key, None)
+            self.timestamps.pop(key, None)
+
+    def set(self, key, value):
+        with self.lock:
+            self._purge_expired()
+            if key in self.map:
+                self.map.pop(key, None)
+            elif len(self.map) >= self.max_size:
+                oldest = next(iter(self.map))
+                self.map.pop(oldest, None)
+                self.timestamps.pop(oldest, None)
+            self.map[key] = value
+            self.timestamps[key] = time.time()
+
+    def get(self, key, default=None):
+        with self.lock:
+            if key not in self.map:
+                return default
+            if time.time() - self.timestamps.get(key, 0) > self.ttl_seconds:
+                self.map.pop(key, None)
+                self.timestamps.pop(key, None)
+                return default
+            return self.map[key]
+
+    def delete(self, key):
+        with self.lock:
+            self.map.pop(key, None)
+            self.timestamps.pop(key, None)
+
+
 # --- Global State Variables ---
 config_lock = threading.Lock()
 stop_event = threading.Event()
-active_threads = []
-processed_slack_events = deque(maxlen=500)
+processed_slack_events = deque(maxlen=1000)
 processed_whatsapp_events = deque(maxlen=500)
 whatsapp_to_slack_map = {}
 slack_to_whatsapp_map = {}
-slack_to_whatsapp_msg_map = {}
+slack_to_whatsapp_msg_map = BoundedMessageMap(max_size=50000, ttl_hours=48)
+thread_pool = ThreadPoolExecutor(max_workers=20)
+slack_bot_user_id = None
+
+# Outbox (JSONL) configuration
+OUTBOX_PATH = pathlib.Path(os.getenv("OUTBOX_PATH", "whatsapp_outbox.jsonl"))
+OUTBOX_FLUSH_INTERVAL = int(os.getenv("OUTBOX_FLUSH_INTERVAL", 60))
+OUTBOX_MAX_ATTEMPTS = int(os.getenv("OUTBOX_MAX_ATTEMPTS", 5))
+OUTBOX_LOCK = threading.Lock()
+
+WHATSAPP_ALERTS_FILE = os.getenv("WHATSAPP_ALERTS_FILE", "sent_whatsapp_alerts.json")
+sent_wa_alerts = set()
+
+
+def load_sent_wa_alerts():
+    if not os.path.exists(WHATSAPP_ALERTS_FILE):
+        return set()
+    try:
+        with open(WHATSAPP_ALERTS_FILE, 'r') as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+
+def save_sent_wa_alerts():
+    try:
+        with open(WHATSAPP_ALERTS_FILE, 'w') as f:
+            json.dump(list(sent_wa_alerts), f)
+    except IOError:
+        logging.error(f"Could not write {WHATSAPP_ALERTS_FILE}")
 
 
 MASTER_PROMPT = """
@@ -110,8 +199,9 @@ def format_chat_history(messages, bot_user_id):
 def get_enhanced_message(chat_history, raw_draft):
     """Calls the Google Gemini API to get the rewritten message without project context."""
     try:
-        
-        genai.configure(api_key="AIzaSyA6PymEguEq_HpR1enCnDJORNZkQsXR51E")
+        if not GEMINI_API_KEY:
+            raise ValueError("GEMINI_API_KEY is not set")
+        genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-pro-latest')
         
         
@@ -191,32 +281,50 @@ def sanitize_id(external_id):
 
 def get_whatsapp_messages():
     try:
-        response = requests.get(f"{NODE_API_URL}/get-messages")
+        response = requests.get(f"{NODE_API_URL}/get-messages", timeout=10)
         if response.status_code == 200: return response.json()
     except requests.exceptions.RequestException as e:
         logging.error(f"Error connecting to WhatsApp service: {e}")
     return []
 
-def send_whatsapp_message(chat_id, message, media=None, mentions=None):
-    
-    try:
-        payload = {"chatId": chat_id, "message": message, "media": media}
-        if mentions:
-            payload["mentions"] = mentions
-        
-        response = requests.post(f"{NODE_API_URL}/send-message", json=payload)
-        if response and response.status_code == 200:
-            return response.json()
-        return None
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error sending message via WhatsApp service: {e}")
-    return None
+def send_whatsapp_message(chat_id, message, media=None, mentions=None, max_retries=3):
+    """Send WhatsApp message with retry logic and detailed error reporting."""
+    for attempt in range(max_retries):
+        try:
+            payload = {"chatId": chat_id, "message": message, "media": media}
+            if mentions:
+                payload["mentions"] = mentions
+
+            response = requests.post(f"{NODE_API_URL}/send-message", json=payload, timeout=10)
+
+            if response.status_code == 200:
+                return {"success": True, "data": response.json()}
+            if response.status_code == 503 and attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            return {
+                "success": False,
+                "error": response.text[:200] if response.text else "HTTP error",
+                "status_code": response.status_code,
+                "retry_after": 60 if response.status_code == 503 else None,
+            }
+        except requests.exceptions.Timeout:
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            return {"success": False, "error": "Request timeout", "status_code": None, "retry_after": None}
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            logging.error(f"Error sending message via WhatsApp service: {e}")
+            return {"success": False, "error": str(e), "status_code": None, "retry_after": None}
 
 def delete_whatsapp_message(message_id):
     logging.info(f"Attempting to delete WhatsApp message: {message_id}")
     try:
         payload = {"messageId": message_id}
-        response = requests.post(f"{NODE_API_URL}/delete-message", json=payload)
+        response = requests.post(f"{NODE_API_URL}/delete-message", json=payload, timeout=10)
         logging.info(f"Delete request sent. Status code: {response.status_code}, Response: {response.text}")
         return response.status_code == 200
     except requests.exceptions.RequestException as e:
@@ -224,12 +332,102 @@ def delete_whatsapp_message(message_id):
     return False
 
 
+# --- Outbox helpers (JSONL) ---
+def queue_outbox(entry):
+    entry = dict(entry)
+    entry.setdefault("id", str(uuid.uuid4()))
+    entry.setdefault("attempts", 0)
+    entry.setdefault("created_at", time.time())
+    line = json.dumps(entry, ensure_ascii=False)
+    with OUTBOX_LOCK:
+        with OUTBOX_PATH.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+
+
+def flush_outbox(web_client: WebClient):
+    """Attempt to send queued messages; remove delivered ones atomically."""
+    if not OUTBOX_PATH.exists():
+        return
+    with OUTBOX_LOCK:
+        try:
+            lines = OUTBOX_PATH.read_text(encoding="utf-8").splitlines()
+        except Exception as e:
+            logging.error(f"Failed to read outbox: {e}")
+            return
+
+        remaining = []
+        for ln in lines:
+            if not ln.strip():
+                continue
+            try:
+                item = json.loads(ln)
+            except Exception:
+                logging.warning("Skipping corrupt outbox line")
+                continue
+
+            # Skip items that exceeded attempts
+            if item.get("attempts", 0) >= OUTBOX_MAX_ATTEMPTS:
+                try:
+                    web_client.chat_postMessage(
+                        channel=item.get("slack_channel"),
+                        thread_ts=item.get("slack_ts"),
+                        text=f"⚠️ Message queued {item.get('id')} failed after {OUTBOX_MAX_ATTEMPTS} attempts."
+                    )
+                except Exception:
+                    logging.exception("Failed to notify Slack about permanent outbox failure")
+                continue
+
+            # Try sending
+            try:
+                resp = send_whatsapp_message(item.get("chat_id"), item.get("message"), item.get("media"), item.get("mentions"))
+                if resp and resp.get("success"):
+                    # notify Slack thread of delivery
+                    try:
+                        web_client.chat_postMessage(
+                            channel=item.get("slack_channel"),
+                            thread_ts=item.get("slack_ts"),
+                            text=f"✅ Previously queued message delivered to WhatsApp."
+                        )
+                    except Exception:
+                        logging.exception("Failed to post delivery notification to Slack")
+                    continue
+                else:
+                    item["attempts"] = item.get("attempts", 0) + 1
+                    remaining.append(json.dumps(item, ensure_ascii=False))
+            except Exception as e:
+                logging.error(f"Error flushing outbox item: {e}")
+                item["attempts"] = item.get("attempts", 0) + 1
+                remaining.append(json.dumps(item, ensure_ascii=False))
+
+        # Write remaining atomically
+        try:
+            tmp = OUTBOX_PATH.with_suffix(".tmp")
+            tmp.write_text("\n".join(remaining) + ("\n" if remaining else ""), encoding="utf-8")
+            tmp.replace(OUTBOX_PATH)
+        except Exception as e:
+            logging.error(f"Failed to write outbox file atomically: {e}")
+
+
+def periodic_outbox_worker(web_client: WebClient):
+    logging.info("Outbox worker started")
+    while not stop_event.is_set():
+        try:
+            flush_outbox(web_client)
+        except Exception:
+            logging.exception("Outbox worker error")
+        for _ in range(OUTBOX_FLUSH_INTERVAL):
+            if stop_event.is_set():
+                break
+            time.sleep(1)
+    logging.info("Outbox worker stopping")
+
+
 # --- WhatsApp Edit Message Function ---
 def edit_whatsapp_message(message_id, new_text):
     """Send a request to the Node.js service to edit a WhatsApp message."""
     try:
         payload = {"messageId": message_id, "newText": new_text}
-        response = requests.post(f"{NODE_API_URL}/edit-message", json=payload)
+        response = requests.post(f"{NODE_API_URL}/edit-message", json=payload, timeout=10)
         if response.status_code == 200 and response.json().get("success"):
             logging.info(f"✅ WhatsApp message {message_id} updated successfully.")
             return True
@@ -263,6 +461,31 @@ def handle_slack_edit_event(client: SocketModeClient, req, web_client: WebClient
         else:
             logging.info(f"ℹ️ No WhatsApp mapping found for edited Slack message {slack_ts}.")
 
+def send_new_wa_chat_alert(chat_id, web_client, sender_name=None):
+    global sent_wa_alerts
+    if chat_id.endswith('@g.us'):
+        return
+    if chat_id in sent_wa_alerts:
+        return
+    sent_wa_alerts.add(chat_id)
+    save_sent_wa_alerts()
+    admin_channel = os.getenv("SLACK_ADMIN_CHANNEL_ID")
+    if not admin_channel:
+        return
+    try:
+        name_line = f"• Name: *{sender_name}*\n" if sender_name else ""
+        web_client.chat_postMessage(
+            channel=admin_channel,
+            text=(f"🔔 New Unmapped WhatsApp Chat Detected\n\n"
+                  f"{name_line}"
+                  f"• Chat ID: `{chat_id}`\n"
+                  f"• Action: Add this ID to Google Sheet for the relevant client")
+        )
+        logging.info(f"Sent new WhatsApp chat alert for {chat_id}")
+    except Exception as e:
+        logging.error(f"Failed to send WhatsApp chat alert: {e}")
+
+
 # --- Core Logic ---
 
 def reload_config():
@@ -273,13 +496,18 @@ def reload_config():
         new_mappings = [{
             "client_name": c.get("client_name"), 
             "whatsapp_chat_id": sanitize_id(c.get("external_id")), 
+            "lid": sanitize_id(c.get("lid")),
             "slack_channel_id": c.get("slack_channel_id"),
             "paused": c.get("paused", False)
         } for c in client_mappings_raw]
         with config_lock:
             whatsapp_to_slack_map.clear()
             slack_to_whatsapp_map.clear()
-            whatsapp_to_slack_map.update({item["whatsapp_chat_id"]: item for item in new_mappings if item.get("whatsapp_chat_id")})
+            for item in new_mappings:
+                if item.get("whatsapp_chat_id"):
+                    whatsapp_to_slack_map[item["whatsapp_chat_id"]] = item
+                if item.get("lid"):
+                    whatsapp_to_slack_map[item["lid"]] = item
             slack_to_whatsapp_map.update({item["slack_channel_id"]: item for item in new_mappings if item.get("slack_channel_id")})
         logging.info(f"Configuration reloaded. Now tracking {len(whatsapp_to_slack_map)} clients.")
     return "Configuration reloaded.", 200
@@ -318,77 +546,83 @@ def send_to_slack_with_retry(action, max_retries=3, delay_seconds=5, **kwargs):
 def poll_whatsapp_and_forward(web_client: WebClient):
     logging.info("WhatsApp polling worker has started.")
     while not stop_event.is_set():
-        with config_lock:
-            current_clients = dict(whatsapp_to_slack_map)
-        new_messages = get_whatsapp_messages()
-        for msg in new_messages:
-            event_id = msg.get('messageId')
-            chat_id = msg.get('chatId')
-            if not event_id or not chat_id:
-                continue
-
-            if event_id not in processed_whatsapp_events and chat_id in current_clients:
-                processed_whatsapp_events.append(event_id)
-                client_info = current_clients[chat_id]
-                slack_channel = client_info["slack_channel_id"]
-                # Check paused status before forwarding
-                if client_info.get('paused', False):
-                    logging.info(f"Channel {slack_channel} is paused. Skipping forwarding.")
+        try:
+            with config_lock:
+                current_clients = dict(whatsapp_to_slack_map)
+            new_messages = get_whatsapp_messages()
+            for msg in new_messages:
+                event_id = msg.get('messageId')
+                chat_id = msg.get('chatId')
+                if not event_id or not chat_id:
                     continue
 
-                sender_name = msg.get('senderName')
-                mapped_name = client_info["client_name"]
-                display_name = sender_name if sender_name else mapped_name
+                if event_id not in processed_whatsapp_events:
+                    if chat_id not in current_clients:
+                        sender_name = msg.get('senderName')
+                        logging.info(f"WA-IN SKIP: chat_id={chat_id!r} NOT in keys={list(current_clients.keys())[:5]}")
+                        send_new_wa_chat_alert(chat_id, web_client, sender_name=sender_name)
+                        continue
+                    processed_whatsapp_events.append(event_id)
+                    client_info = current_clients[chat_id]
+                    slack_channel = client_info["slack_channel_id"]
+                    # Check paused status before forwarding
+                    if client_info.get('paused', False):
+                        logging.info(f"Channel {slack_channel} is paused. Skipping forwarding.")
+                        continue
 
-                content = msg.get('body', '')
-                quoted_body = msg.get('quotedBody')
+                    sender_name = msg.get('senderName')
+                    mapped_name = client_info["client_name"]
+                    display_name = sender_name if sender_name else mapped_name
 
-                message_text = ""
-                if quoted_body:
-                    message_text += f"> {quoted_body}\n"
+                    content = msg.get('body', '')
+                    quoted_body = msg.get('quotedBody')
 
-                has_media = bool(msg.get('media') and msg['media'].get('data'))
+                    message_text = ""
+                    if quoted_body:
+                        message_text += f"> {quoted_body}\n"
 
-                # --- This is the modified section ---
-                if has_media:
-                    filename = msg['media'].get('filename', 'file.bin')
-                    message_text += f"Sent a file: `{filename}`\n"
-                    if content.strip():
-                        message_text += content
-                else:
-                    message_text += content
-                # ------------------------------------
+                    has_media = bool(msg.get('media') and msg['media'].get('data'))
 
-                if not message_text.strip() and not has_media:
-                    logging.info(f"Ignoring empty event from '{display_name}' (e.g., a reaction).")
-                    continue
-
-                final_text_payload = f"*{display_name}:*\n{message_text}"
-
-                try:
                     if has_media:
-                        file_content = base64.b64decode(msg['media']['data'])
-                        web_client.files_upload_v2(
-                            channel=slack_channel, 
-                            content=file_content, 
-                            filename=msg['media'].get('filename', 'file.bin'),
-                            initial_comment=final_text_payload
-                        )
+                        filename = msg['media'].get('filename', 'file.bin')
+                        message_text += f"Sent a file: `{filename}`\n"
+                        if content.strip():
+                            message_text += content
                     else:
-                        # This part remains for text-only messages
-                        notification_text = f"{display_name}: {content}"
-                        message_blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": message_text}}]
-                        web_client.chat_postMessage(
-                            channel=slack_channel,
-                            text=notification_text,
-                            blocks=message_blocks,
-                            username=display_name,
-                        )
-                    logging.info(f"Forwarded WhatsApp message from '{display_name}' to Slack")
-                except SlackApiError as e:
-                    logging.error(f"Slack API error forwarding from '{display_name}': {e.response['error']}")
-        
-        time.sleep(0.5)
+                        message_text += content
+
+                    if not message_text.strip() and not has_media:
+                        logging.info(f"Ignoring empty event from '{display_name}' (e.g., a reaction).")
+                        continue
+
+                    final_text_payload = f"*{display_name}:*\n{message_text}"
+
+                    try:
+                        if has_media:
+                            file_content = base64.b64decode(msg['media']['data'])
+                            web_client.files_upload_v2(
+                                channel=slack_channel, 
+                                content=file_content, 
+                                filename=msg['media'].get('filename', 'file.bin'),
+                                initial_comment=final_text_payload
+                            )
+                        else:
+                            notification_text = f"{display_name}: {content}"
+                            message_blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": message_text}}]
+                            web_client.chat_postMessage(
+                                channel=slack_channel,
+                                text=notification_text,
+                                blocks=message_blocks,
+                                username=display_name,
+                            )
+                        logging.info(f"Forwarded WhatsApp message from '{display_name}' to Slack")
+                    except SlackApiError as e:
+                        logging.error(f"Slack API error forwarding from '{display_name}': {e.response['error']}")
+
+            time.sleep(0.5)
+        except Exception as e:
+            logging.error(f"Poller loop error, continuing in 5s: {e}")
+            time.sleep(5)
     logging.info("WhatsApp polling worker is shutting down.")
 
 
@@ -542,15 +776,15 @@ def handle_slack_delete_event(client: SocketModeClient, req, web_client: WebClie
         logging.info(f"🗑️ SLACK DELETE DETECTED - TS: {deleted_ts}, Channel: {channel_id}")
         
         # Check if we have a WhatsApp message ID mapped to this Slack message
-        if deleted_ts in slack_to_whatsapp_msg_map:
-            whatsapp_msg_id = slack_to_whatsapp_msg_map[deleted_ts]
+        whatsapp_msg_id = slack_to_whatsapp_msg_map.get(deleted_ts)
+        if whatsapp_msg_id:
             logging.info(f"🗑️ Attempting to delete corresponding WhatsApp message: {whatsapp_msg_id}")
             
             # Delete the WhatsApp message
             if delete_whatsapp_message(whatsapp_msg_id):
                 logging.info(f"✅ Successfully deleted WhatsApp message: {whatsapp_msg_id}")
                 # Remove from mapping
-                del slack_to_whatsapp_msg_map[deleted_ts]
+                slack_to_whatsapp_msg_map.delete(deleted_ts)
             else:
                 logging.error(f"❌ Failed to delete WhatsApp message: {whatsapp_msg_id}")
         else:
@@ -562,43 +796,38 @@ def handle_slack_delete_event(client: SocketModeClient, req, web_client: WebClie
 def handle_slack_message(client: SocketModeClient, req, web_client: WebClient):
     client.send_socket_mode_response({"envelope_id": req.envelope_id})
     event = req.payload.get("event", {})
-    event_id = (event.get("channel"), event.get("ts"))
-   
-    # MODIFIED FILTER - Allow messages from your specific bot
-    if (event.get("type") != "message" or 
-        (event.get("bot_id") and event.get("bot_id") != "B09BJQ8HBNZ") or  # ← Your Bot User ID
-        (event.get("subtype") and event.get("subtype") != "file_share")):
+
+    if event.get("type") != "message":
         return
-    
-    channel_id, ts = event.get("channel"), event.get("ts")
-    event_id = (channel_id, ts)
-    
-    # --- This is the corrected, definitive de-duplication logic ---
+
+    bot_id = event.get("bot_id")
+    if bot_id and bot_id == slack_bot_user_id:
+        return
+
+    subtype = event.get("subtype")
+    if bot_id or (subtype and subtype != "file_share"):
+        logging.debug(f"[SKIP] bot_id={bot_id} subtype={subtype} ch={event.get('channel')}")
+        return
+
+    channel_id = event.get("channel")
+    ts = event.get("ts")
+    event_key = (channel_id, ts)
+
     with config_lock:
-        is_managed_channel = channel_id in slack_to_whatsapp_map
-        is_new_event = event_id not in processed_slack_events
-        
-        # Only proceed if the channel is managed AND the event is new.
-        if is_managed_channel and is_new_event:
-            # "Claim" the event immediately.
-            processed_slack_events.append(event_id)
-            
-            # <<< The thread is now started safely inside the condition >>>
-            thread = threading.Thread(target=process_slack_to_whatsapp, args=(event, web_client.token))
-            active_threads.append(thread)
-            thread.start()
-# The definitive, rebuilt version for main_whatsapp.py
+        if channel_id not in slack_to_whatsapp_map:
+            logging.info(f"[SKIP] channel {channel_id} not mapped")
+            return
 
-# The simplified, stable version for main_whatsapp.py
+        if event_key in processed_slack_events:
+            return
 
-# The definitive, stable version for main_whatsapp.py
+        processed_slack_events.append(event_key)
+        text_preview = (event.get("text") or "")[:60]
+        logging.info(f"<- Slack: \"{text_preview}\" -> WA (ch={channel_id})")
+        thread_pool.submit(process_slack_to_whatsapp, event, web_client.token)
 
-# The definitive, stable version for main_whatsapp.py
-
-# In main_whatsapp.py
 
 def process_slack_to_whatsapp(event, bot_token):
-    global active_threads
     try:
         channel_id, slack_ts = event.get("channel"), event.get("ts")
         
@@ -623,9 +852,14 @@ def process_slack_to_whatsapp(event, bot_token):
                 logging.error(f"Failed to post paused info message to Slack: {e}")
             return
 
-        whatsapp_chat_id = mapping["whatsapp_chat_id"]
+        whatsapp_chat_id = mapping["whatsapp_chat_id"] or mapping.get("lid")
         client_name = mapping["client_name"]
         text_caption = event.get("text", "")
+
+        # dev prefix: post to Slack only, don't forward to WhatsApp
+        if text_caption.strip().startswith('dev '):
+            logging.info(f"[DEV] \"{text_caption[:60]}\" kept in Slack, not forwarded")
+            return
 
         # --- Case 1: The message has files ---
         if "files" in event and event["files"]:
@@ -674,18 +908,28 @@ def process_slack_to_whatsapp(event, bot_token):
                     response = send_whatsapp_message(whatsapp_chat_id, current_caption, media_payload)
 
                     if response and response.get("success"):
+                        data = response.get("data", {})
                         # [UNCHANGED] Logic to map message ID of the first file
                         if is_first_file:
-                            slack_to_whatsapp_msg_map[slack_ts] = response.get("messageId")
+                            slack_to_whatsapp_msg_map.set(slack_ts, data.get("messageId"))
                         logging.info(f"Forwarded file '{file_name}' to WhatsApp user '{client_name}'")
                     else:
                         # [NEW] Better user feedback on send failure
                         error_from_service = response.get('error', 'unknown reason') if response else 'connection failed'
                         logging.error(f"Failed to forward file '{file_name}' via Node.js service: {error_from_service}")
+                        # queue the failed file for retry
+                        queue_outbox({
+                            "chat_id": whatsapp_chat_id,
+                            "message": current_caption,
+                            "media": media_payload,
+                            "mentions": None,
+                            "slack_channel": channel_id,
+                            "slack_ts": slack_ts,
+                        })
                         web_client.chat_postMessage(
                             channel=channel_id,
                             thread_ts=slack_ts,
-                            text=f"🔴 Failed to send `{file_name}` to WhatsApp. Reason: {error_from_service}"
+                            text=f"🔴 Failed to send `{file_name}` to WhatsApp. It has been queued and will be retried automatically."
                         )
                     
                     is_first_file = False
@@ -733,16 +977,26 @@ def process_slack_to_whatsapp(event, bot_token):
             response = send_whatsapp_message(whatsapp_chat_id, final_text, None, mention_ids)
             web_client = WebClient(token=bot_token)
             if response and response.get("success"):
-                slack_to_whatsapp_msg_map[slack_ts] = response.get("messageId")
+                data = response.get("data", {})
+                slack_to_whatsapp_msg_map.set(slack_ts, data.get("messageId"))
                 logging.info(f"Forwarded Slack text message to WhatsApp user '{client_name}'")
             else:
                 error_msg = response.get('error', 'Unknown error') if response else 'No response from WhatsApp service.'
                 logging.error(f"Failed to forward Slack text message to WhatsApp user '{client_name}'. Reason: {error_msg}")
+                # queue the failed text for retry and notify thread
+                queue_outbox({
+                    "chat_id": whatsapp_chat_id,
+                    "message": final_text,
+                    "media": None,
+                    "mentions": mention_ids,
+                    "slack_channel": channel_id,
+                    "slack_ts": slack_ts,
+                })
                 try:
                     web_client.chat_postMessage(
                         channel=channel_id,
                         thread_ts=slack_ts,
-                        text=f"🔴 Failed to forward this message to WhatsApp. Reason: {error_msg}",
+                        text=f"🔴 Failed to forward this message to WhatsApp. It has been queued and will be retried automatically.",
                         username="Bitlink Bridge Info"
                     )
                 except Exception as e:
@@ -750,9 +1004,6 @@ def process_slack_to_whatsapp(event, bot_token):
 
     except Exception as e:
         logging.error(f"A critical error occurred in process_slack_to_whatsapp: {e}", exc_info=True)
-    finally:
-        if threading.current_thread() in active_threads:
-            active_threads.remove(threading.current_thread())
 
             
 # --- Service Management ---
@@ -782,15 +1033,15 @@ def whatsapp_edit_endpoint():
     # Find the Slack message TS for this WhatsApp message
     slack_ts = None
     slack_channel = None
-    for ts, wa_id in slack_to_whatsapp_msg_map.items():
-        if wa_id == message_id:
-            slack_ts = ts
-            # Find the channel for this TS
-            for channel, mapping in slack_to_whatsapp_map.items():
-                if mapping and ts in slack_to_whatsapp_msg_map:
-                    slack_channel = channel
-                    break
-            break
+    with config_lock:
+        for ts, wa_id in list(slack_to_whatsapp_msg_map.map.items()):
+            if wa_id == message_id:
+                slack_ts = ts
+                for channel, mapping in slack_to_whatsapp_map.items():
+                    if mapping and ts in slack_to_whatsapp_msg_map.map:
+                        slack_channel = channel
+                        break
+                break
     if not slack_ts or not slack_channel:
         logging.warning(f"No Slack mapping found for WhatsApp message {message_id}")
         return jsonify({'success': False, 'error': 'No Slack mapping found'}), 404
@@ -803,16 +1054,35 @@ def whatsapp_edit_endpoint():
         logging.error(f"Failed to update Slack message: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+def poller_with_restart(web_client):
+    while not stop_event.is_set():
+        try:
+            poll_whatsapp_and_forward(web_client)
+        except Exception as e:
+            logging.error(f"Poller crashed: {e}. Restarting in 5s...")
+            time.sleep(5)
+
 def main():
+    if not all([SLACK_APP_TOKEN, SLACK_BOT_TOKEN]):
+        sys.exit("FATAL: SLACK_APP_TOKEN or SLACK_BOT_TOKEN is missing.")
+
+    global sent_wa_alerts
+    sent_wa_alerts = load_sent_wa_alerts()
+
     reload_config() 
     web_client = WebClient(token=SLACK_BOT_TOKEN)
+    try:
+        auth_test = web_client.auth_test()
+        global slack_bot_user_id
+        slack_bot_user_id = auth_test["user_id"]
+        logging.info(f"Slack bot user ID: {slack_bot_user_id}")
+    except Exception as e:
+        logging.warning(f"Could not fetch bot user ID: {e}")
     socket_client = SocketModeClient(app_token=SLACK_APP_TOKEN, web_client=web_client)
-    whatsapp_poller_thread = threading.Thread(target=poll_whatsapp_and_forward, args=(web_client,))
-    whatsapp_poller_thread.daemon = True
-    whatsapp_poller_thread.start()
-    refresh_server_thread = threading.Thread(target=run_refresh_server)
-    refresh_server_thread.daemon = True
-    refresh_server_thread.start()
+    thread_pool.submit(poller_with_restart, web_client)
+    thread_pool.submit(periodic_outbox_worker, web_client)
+    thread_pool.submit(run_refresh_server)
     socket_client.socket_mode_request_listeners.append(
         lambda client, req: handle_enhance_command_socket_mode(client, req, web_client)
     )
@@ -835,13 +1105,13 @@ def main():
         time.sleep(1)
 
 if __name__ == "__main__":
-    if not all([SLACK_APP_TOKEN, SLACK_BOT_TOKEN]):
-        sys.exit("FATAL: SLACK_APP_TOKEN or SLACK_BOT_TOKEN is missing.")
     try:
         main()
     except KeyboardInterrupt:
         logging.info("Shutdown signal received. Waiting for threads to finish...")
         stop_event.set()
-        for thread in active_threads:
-            thread.join()
+        try:
+            thread_pool.shutdown(wait=True, cancel_futures=False)
+        except Exception as e:
+            logging.warning(f"Thread pool shutdown issue: {e}")
         logging.info("All processing threads have finished. Bridge shut down.")

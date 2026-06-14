@@ -10,3 +10,4 @@ google-auth-oauthlib==0.4.6
 requests-toolbelt==0.9.1
 Flask
 aiohttp
+google.generativeai
