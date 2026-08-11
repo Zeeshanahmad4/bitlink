@@ -53,8 +53,5 @@ whatsapp-bot/notified_groups.json
 # Temp downloads
 temp_downloads_telegram/
 
-
-
-    
-     
-chat.md                     
+# Telegram session (sensitive)
+bitlink_telegram.session
