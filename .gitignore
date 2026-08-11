@@ -6,7 +6,9 @@ config.py
 credentials/
 service_account.json
 /wa_gateway
-
+whatsapp-bot/.wwebjs_auth/
+whatsapp-bot/auth_info/
+telegram_reverse_map.json
 # Environment variables
 .env
 .env.local
@@ -50,3 +52,9 @@ whatsapp-bot/notified_groups.json
 
 # Temp downloads
 temp_downloads_telegram/
+
+
+
+    
+     
+chat.md                     

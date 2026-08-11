@@ -71,10 +71,6 @@ processed_slack_events = deque(maxlen=1000)  # Increased capacity
 # Format: "channel_id:ts" -> telegram_message_id
 slack_to_telegram_message_map = {}
 
-# Reverse map: telegram_msg_id -> {channel, ts, sender_name}
-REVERSE_MAP_FILE = os.getenv("TELEGRAM_REVERSE_MAP_FILE", "telegram_reverse_map.json")
-telegram_to_slack_message_map = {}
-
 # IMPROVEMENT #1: Background worker queue
 event_queue = None  # Will be initialized as asyncio.Queue
 
@@ -106,31 +102,6 @@ def save_message_map():
             json.dump(slack_to_telegram_message_map, f, indent=2)
     except IOError as e:
         logging.error(f"Could not write message map: {e}")
-
-def load_reverse_map():
-    """Loads the Telegram->Slack message ID reverse mapping from disk."""
-    if not os.path.exists(REVERSE_MAP_FILE):
-        return {}
-    try:
-        with open(REVERSE_MAP_FILE, 'r') as f:
-            data = json.load(f)
-            return {int(k): v for k, v in data.items()}
-    except (IOError, json.JSONDecodeError, ValueError) as e:
-        logging.error(f"Could not load reverse map: {e}")
-        return {}
-
-def save_reverse_map():
-    """Saves the Telegram->Slack reverse map to disk, capped at 5000 entries."""
-    try:
-        if len(telegram_to_slack_message_map) > 10000:
-            items = list(telegram_to_slack_message_map.items())
-            new_map = dict(items[-5000:])
-            telegram_to_slack_message_map.clear()
-            telegram_to_slack_message_map.update(new_map)
-        with open(REVERSE_MAP_FILE, 'w') as f:
-            json.dump({str(k): v for k, v in telegram_to_slack_message_map.items()}, f, indent=2)
-    except IOError as e:
-        logging.error(f"Could not write reverse map: {e}")
 
 # --- 4. CONFIGURATION MANAGEMENT ---
 
@@ -323,31 +294,22 @@ async def handle_telegram_message(event):
                 channel=slack_channel_id,
                 file=file_path,
                 title=Path(file_path).name,
-                initial_comment=f"*{sender_name}:*\n{comment}"
+                # Use CLIENT name instead of sender name
+                initial_comment=f"*{client_name}:*\n{comment}"  # ← CHANGED: client_name
             )
             os.remove(file_path) # Clean up
-            logging.info(f"Forwarded file from '{sender_name}' to Slack.")
+            logging.info(f"Forwarded file from '{client_name}' to Slack.")  # ← CHANGED: client_name
 
         elif message_text:
             # For text messages, we can customize the user profile
-            slack_response = await slack_client.chat_postMessage(
+            await slack_client.chat_postMessage(
                 channel=slack_channel_id,
-                text=f"{sender_name}: {message_text}",
-                username=sender_name,
-                icon_emoji=":robot_face:",
+                text=f"{client_name}: {message_text}", # ← CHANGED: client_name
+                username=client_name,  # ← CHANGED: client_name (this overrides "telegram-bridge")
+                icon_emoji=":robot_face:",  # ← ADDED: Optional emoji
                 blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": message_text}}]
             )
-            slack_ts = slack_response.get("ts")
-            if slack_ts and event.message.id:
-                telegram_to_slack_message_map[event.message.id] = {
-                    "channel": slack_channel_id,
-                    "ts": slack_ts,
-                    "sender_name": sender_name
-                }
-                if len(telegram_to_slack_message_map) > 10000:
-                    oldest = next(iter(telegram_to_slack_message_map))
-                    del telegram_to_slack_message_map[oldest]
-            logging.info(f"Forwarded text from '{sender_name}' to Slack.")
+            logging.info(f"Forwarded text from '{client_name}' to Slack.")  # ← CHANGED: client_name
 
         if pfp_path and os.path.exists(pfp_path):
             os.remove(pfp_path) # Clean up profile picture
@@ -356,50 +318,6 @@ async def handle_telegram_message(event):
         logging.error(f"Slack API Error forwarding from Telegram: {e.response['error']}")
     except Exception as e:
         logging.error(f"An unexpected error occurred in handle_telegram_message: {e}", exc_info=True)
-
-@telethon_client.on(events.MessageEdited)
-async def handle_telegram_edit(event):
-    """Forwards Telegram message edits to Slack via chat_update."""
-    if event.message is None or not event.message.text:
-        return
-    telegram_msg_id = event.message.id
-    new_text = event.message.text
-    mapping = telegram_to_slack_message_map.get(telegram_msg_id)
-    if not mapping:
-        return
-    try:
-        sender_name = mapping.get("sender_name", "Client")
-        await slack_client.chat_update(
-            channel=mapping["channel"],
-            ts=mapping["ts"],
-            text=f"{sender_name}: {new_text}",
-            blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": new_text}}]
-        )
-        logging.info(f"[EDIT TG→Slack] msg {telegram_msg_id} updated in Slack")
-    except SlackApiError as e:
-        logging.error(f"Failed to edit Slack message: {e}")
-    except Exception as e:
-        logging.error(f"Error in edit handler: {e}")
-
-@telethon_client.on(events.MessageDeleted)
-async def handle_telegram_delete(event):
-    """Posts a thread reply in Slack when a Telegram message is deleted."""
-    for deleted_id in event.deleted_ids:
-        mapping = telegram_to_slack_message_map.pop(deleted_id, None)
-        if not mapping:
-            continue
-        try:
-            await slack_client.chat_postMessage(
-                channel=mapping["channel"],
-                thread_ts=mapping["ts"],
-                text="🗑️ This message was deleted by the client in Telegram.",
-                username="Bitlink Bridge Info"
-            )
-            logging.info(f"[DELETE TG→Slack] posted delete notice for msg {deleted_id}")
-        except SlackApiError as e:
-            logging.error(f"Failed to post delete notice: {e}")
-        except Exception as e:
-            logging.error(f"Error in delete handler: {e}")
 
 # --- NEW CHAT ALERTS ---
 
@@ -550,12 +468,6 @@ def clean_slack_formatting(text: str) -> str:
     """
     if not text:
         return text
-
-    # Pattern 0a: <mailto:email|display> → display
-    text = re.sub(r'<mailto:[^|>]+\|([^>]+)>', r'\1', text)
-
-    # Pattern 0b: <mailto:email> → email
-    text = re.sub(r'<mailto:([^>]+)>', r'\1', text)
 
     # Pattern 1: <URL|display_text> → display_text (usually the clean URL)
     text = re.sub(r'<(https?://[^|>]+)\|([^>]+)>', r'\2', text)
@@ -867,11 +779,10 @@ def start_slack_socket_mode():
 # --- 7. MAIN EXECUTION ---
 
 async def main():
-    global main_loop, aiohttp_session, sent_alerts, slack_bot_user_id, event_queue, slack_to_telegram_message_map, telegram_to_slack_message_map
+    global main_loop, aiohttp_session, sent_alerts, slack_bot_user_id, event_queue, slack_to_telegram_message_map
 
     sent_alerts = load_sent_alerts()
-    slack_to_telegram_message_map = load_message_map()
-    telegram_to_slack_message_map = load_reverse_map()
+    slack_to_telegram_message_map = load_message_map()  # IMPROVEMENT #3
     main_loop = asyncio.get_running_loop()
 
     # IMPROVEMENT #1: Initialize event queue
@@ -950,7 +861,6 @@ async def main():
             while True:
                 await asyncio.sleep(300)  # Save every 5 minutes
                 save_message_map()
-                save_reverse_map()
 
         save_task = asyncio.create_task(periodic_save())
 

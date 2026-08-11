@@ -86,10 +86,16 @@ async def handle_refresh(request):
     asyncio.create_task(reload_config())
     return web.Response(text="Refresh signal received.")
 
+async def handle_health(request):
+    return web.json_response({"ok": True, "bridge": "discord", "clients": len(discord_id_to_slack_map)})
+
 async def run_refresh_server():
     """Runs the aiohttp server to listen for the refresh signal."""
     app = web.Application()
-    app.add_routes([web.post('/refresh', handle_refresh)])
+    app.add_routes([
+        web.post('/refresh', handle_refresh),
+        web.get('/health', handle_health)
+    ])
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, 'localhost', DISCORD_REFRESH_PORT)
