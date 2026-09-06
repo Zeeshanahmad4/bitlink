@@ -312,24 +312,37 @@ async def handle_telegram_message(event):
     message_text = event.message.text
 
     try:
+        forwarded_as_file = False
         if event.message.media:
-            logging.info(f"Media message received from '{sender_name}' ({chat_id}). Downloading...")
-            file_path = await telethon_client.download_media(event.message, file=DOWNLOAD_DIR)
+            # Web page link previews (MessageMediaWebPage) have no downloadable
+            # binary — download_media() returns None for them. Route those to the
+            # text path so the URL is still forwarded to Slack.
+            if isinstance(event.message.media, types.MessageMediaWebPage):
+                logging.info(f"Web-preview (link) message from '{sender_name}' ({chat_id}). Forwarding as text.")
+            else:
+                logging.info(f"Media message received from '{sender_name}' ({chat_id}). Downloading...")
+                file_path = await telethon_client.download_media(event.message, file=DOWNLOAD_DIR)
 
-            # Prepare comment, use default if caption is empty
-            comment = message_text or f"Sent a file: {Path(file_path).name}"
+                if file_path is None:
+                    # Defensive: some other media type also returned no file.
+                    logging.warning(f"download_media() returned None for media type {type(event.message.media).__name__} from '{sender_name}'. Falling back to text.")
+                else:
+                    # Prepare comment, use default if caption is empty
+                    comment = message_text or f"Sent a file: {Path(file_path).name}"
 
-            await slack_client.files_upload_v2(
-                channel=slack_channel_id,
-                file=file_path,
-                title=Path(file_path).name,
-                initial_comment=f"*{sender_name}:*\n{comment}"
-            )
-            os.remove(file_path) # Clean up
-            logging.info(f"Forwarded file from '{sender_name}' to Slack.")
+                    await slack_client.files_upload_v2(
+                        channel=slack_channel_id,
+                        file=file_path,
+                        title=Path(file_path).name,
+                        initial_comment=f"*{sender_name}:*\n{comment}"
+                    )
+                    os.remove(file_path) # Clean up
+                    logging.info(f"Forwarded file from '{sender_name}' to Slack.")
+                    forwarded_as_file = True
 
-        elif message_text:
-            # For text messages, we can customize the user profile
+        if not forwarded_as_file and message_text:
+            # Handles: plain text messages, URL/web-preview messages, and media
+            # messages whose download returned None (all fall through to here).
             slack_response = await slack_client.chat_postMessage(
                 channel=slack_channel_id,
                 text=f"{sender_name}: {message_text}",
