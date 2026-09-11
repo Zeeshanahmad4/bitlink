@@ -183,7 +183,8 @@ function registerMessageHandlers() {
                 remoteJid: chatId,
                 id: msgId,
                 fromMe: false,
-                participant: msg.key.participant
+                participant: msg.key.participant,
+                message: msg
             });
 
             const hasMedia = !!(msg.message?.imageMessage ||
@@ -293,7 +294,7 @@ async function startSock() {
             const stored = Array.from(messageStore.values()).find(
                 m => m.remoteJid === jid && m.id === id
             );
-            return stored || undefined;
+            return stored?.message || undefined;
         },
     });
 
@@ -397,7 +398,7 @@ app.post('/send-message', async (req, res) => {
 
         const msgId = sentMessage?.key?.id;
         if (msgId) {
-            storeMessage(msgId, { remoteJid: chatId, id: msgId, fromMe: true });
+            storeMessage(msgId, { remoteJid: chatId, id: msgId, fromMe: true, message: sentMessage });
         }
 
         log(`✅ Successfully sent message to ${chatId}`);

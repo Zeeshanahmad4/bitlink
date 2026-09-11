@@ -27,6 +27,8 @@ from slack_sdk.models.blocks import PlainTextInputElement
 
 from g_sheets_client import get_client_mappings
 
+from message_logger import init_db, log_message
+
 # Convert MB to bytes for easy comparison
 MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE_MB", 50)) * 1024 * 1024
 
@@ -558,6 +560,22 @@ def poll_whatsapp_and_forward(web_client: WebClient):
                     continue
 
                 if event_id not in processed_whatsapp_events:
+                    is_mapped = chat_id in current_clients
+                    media = msg.get('media') or {}
+                    log_message(
+                        platform="whatsapp",
+                        direction="in",
+                        chat_id=chat_id,
+                        sender_name=msg.get('senderName'),
+                        client_name=(current_clients[chat_id]["client_name"] if is_mapped else None),
+                        message_text=msg.get('body'),
+                        message_id=event_id,
+                        slack_channel=(current_clients[chat_id]["slack_channel_id"] if is_mapped else None),
+                        media_filename=media.get('filename'),
+                        media_type=media.get('mimetype'),
+                        quoted_text=msg.get('quotedBody'),
+                        is_mapped=is_mapped,
+                    )
                     if chat_id not in current_clients:
                         sender_name = msg.get('senderName')
                         logging.info(f"WA-IN SKIP: chat_id={chat_id!r} NOT in keys={list(current_clients.keys())[:5]}")
@@ -916,6 +934,20 @@ def process_slack_to_whatsapp(event, bot_token):
                         # [UNCHANGED] Logic to map message ID of the first file
                         if is_first_file:
                             slack_to_whatsapp_msg_map.set(slack_ts, data.get("messageId"))
+                        log_message(
+                            platform="whatsapp",
+                            direction="out",
+                            chat_id=whatsapp_chat_id,
+                            sender_name="Bot",
+                            client_name=client_name,
+                            message_text=current_caption,
+                            message_id=data.get("messageId"),
+                            media_filename=file_name,
+                            media_type=file_info.get("mimetype"),
+                            slack_channel=channel_id,
+                            slack_ts=slack_ts,
+                            is_mapped=True,
+                        )
                         logging.info(f"Forwarded file '{file_name}' to WhatsApp user '{client_name}'")
                     else:
                         # [NEW] Better user feedback on send failure
@@ -983,6 +1015,18 @@ def process_slack_to_whatsapp(event, bot_token):
             if response and response.get("success"):
                 data = response.get("data", {})
                 slack_to_whatsapp_msg_map.set(slack_ts, data.get("messageId"))
+                log_message(
+                    platform="whatsapp",
+                    direction="out",
+                    chat_id=whatsapp_chat_id,
+                    sender_name="Bot",
+                    client_name=client_name,
+                    message_text=final_text,
+                    message_id=data.get("messageId"),
+                    slack_channel=channel_id,
+                    slack_ts=slack_ts,
+                    is_mapped=True,
+                )
                 logging.info(f"Forwarded Slack text message to WhatsApp user '{client_name}'")
             else:
                 error_msg = response.get('error', 'Unknown error') if response else 'No response from WhatsApp service.'
@@ -1087,6 +1131,8 @@ def poller_with_restart(web_client):
 def main():
     if not all([SLACK_APP_TOKEN, SLACK_BOT_TOKEN]):
         sys.exit("FATAL: SLACK_APP_TOKEN or SLACK_BOT_TOKEN is missing.")
+
+    init_db()
 
     global sent_wa_alerts
     sent_wa_alerts = load_sent_wa_alerts()
