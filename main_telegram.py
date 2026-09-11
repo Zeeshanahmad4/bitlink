@@ -23,6 +23,8 @@ from collections import deque
 # Import your existing Google Sheets client
 from g_sheets_client import get_client_mappings
 
+from message_logger import init_db, log_message_async
+
 # --- 1. INITIALIZATION AND CONFIGURATION ---
 
 load_dotenv()
@@ -296,7 +298,42 @@ async def handle_telegram_message(event):
     if event.out: return
 
     chat_id = str(event.chat_id)
-    if chat_id not in telegram_to_slack_map: return
+
+    sender_name, pfp_path = await get_sender_details(event)
+    message_text = event.message.text
+
+    # Extract quoted (replied-to) text for Slack blockquote display
+    quoted_text = None
+    if getattr(event.message, 'reply_to', None) and getattr(event.message.reply_to, 'reply_to_msg_id', None):
+        try:
+            replied = await event.message.get_reply_message()
+            if replied and replied.text:
+                quoted_text = replied.text
+        except Exception:
+            quoted_text = None
+
+    display_text = message_text or ""
+    if quoted_text:
+        display_text = f"> {quoted_text}\n{display_text}"
+
+    is_mapped = chat_id in telegram_to_slack_map
+    await log_message_async(
+        platform="telegram",
+        direction="in",
+        chat_id=chat_id,
+        sender_name=sender_name,
+        client_name=(telegram_to_slack_map[chat_id]["client_name"] if is_mapped else None),
+        message_text=message_text,
+        message_id=str(event.message.id) if event.message.id else None,
+        slack_channel=(telegram_to_slack_map[chat_id]["slack_channel_id"] if is_mapped else None),
+        quoted_text=quoted_text,
+        is_mapped=is_mapped,
+    )
+
+    if not is_mapped:
+        if pfp_path and os.path.exists(pfp_path):
+            os.remove(pfp_path)
+        return
 
     client_info = telegram_to_slack_map[chat_id]
     slack_channel_id = client_info["slack_channel_id"]  # ← MOVE THIS LINE UP!
@@ -308,34 +345,44 @@ async def handle_telegram_message(event):
 
     client_name = client_info["client_name"]  # ← CRITICAL: Get client name from mapping
 
-    sender_name, pfp_path = await get_sender_details(event)
-    message_text = event.message.text
-
     try:
+        forwarded_as_file = False
         if event.message.media:
-            logging.info(f"Media message received from '{sender_name}' ({chat_id}). Downloading...")
-            file_path = await telethon_client.download_media(event.message, file=DOWNLOAD_DIR)
+            # Web page link previews (MessageMediaWebPage) have no downloadable
+            # binary — download_media() returns None for them. Route those to the
+            # text path so the URL is still forwarded to Slack.
+            if isinstance(event.message.media, types.MessageMediaWebPage):
+                logging.info(f"Web-preview (link) message from '{sender_name}' ({chat_id}). Forwarding as text.")
+            else:
+                logging.info(f"Media message received from '{sender_name}' ({chat_id}). Downloading...")
+                file_path = await telethon_client.download_media(event.message, file=DOWNLOAD_DIR)
 
-            # Prepare comment, use default if caption is empty
-            comment = message_text or f"Sent a file: {Path(file_path).name}"
+                if file_path is None:
+                    # Defensive: some other media type also returned no file.
+                    logging.warning(f"download_media() returned None for media type {type(event.message.media).__name__} from '{sender_name}'. Falling back to text.")
+                else:
+                    # Prepare comment, use default if caption is empty
+                    comment = message_text or f"Sent a file: {Path(file_path).name}"
 
-            await slack_client.files_upload_v2(
-                channel=slack_channel_id,
-                file=file_path,
-                title=Path(file_path).name,
-                initial_comment=f"*{sender_name}:*\n{comment}"
-            )
-            os.remove(file_path) # Clean up
-            logging.info(f"Forwarded file from '{sender_name}' to Slack.")
+                    await slack_client.files_upload_v2(
+                        channel=slack_channel_id,
+                        file=file_path,
+                        title=Path(file_path).name,
+                        initial_comment=f"*{sender_name}:*\n{comment}"
+                    )
+                    os.remove(file_path) # Clean up
+                    logging.info(f"Forwarded file from '{sender_name}' to Slack.")
+                    forwarded_as_file = True
 
-        elif message_text:
-            # For text messages, we can customize the user profile
+        if not forwarded_as_file and message_text:
+            # Handles: plain text messages, URL/web-preview messages, and media
+            # messages whose download returned None (all fall through to here).
             slack_response = await slack_client.chat_postMessage(
                 channel=slack_channel_id,
-                text=f"{sender_name}: {message_text}",
+                text=f"{sender_name}: {display_text}",
                 username=sender_name,
                 icon_emoji=":robot_face:",
-                blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": message_text}}]
+                blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": display_text}}]
             )
             slack_ts = slack_response.get("ts")
             if slack_ts and event.message.id:
@@ -759,6 +806,21 @@ async def process_slack_event_async(event: dict, bot_token: str):
                     if is_first and msg:
                         telegram_msg_id = msg.id
 
+                    await log_message_async(
+                        platform="telegram",
+                        direction="out",
+                        chat_id=str(telegram_id),
+                        sender_name="Bot",
+                        client_name=client_name,
+                        message_text=caption,
+                        message_id=str(msg.id) if msg else None,
+                        media_filename=filename,
+                        media_type=filetype,
+                        slack_channel=channel_id,
+                        slack_ts=ts,
+                        is_mapped=True,
+                    )
+
                 except Exception as send_error:
                     logging.error(f"Failed to send file {filename}: {send_error}")
                 finally:
@@ -774,6 +836,18 @@ async def process_slack_event_async(event: dict, bot_token: str):
                 if msg:
                     telegram_msg_id = msg.id
                 logging.info(f"   ✅ Text sent to Telegram")
+                await log_message_async(
+                    platform="telegram",
+                    direction="out",
+                    chat_id=str(telegram_id),
+                    sender_name="Bot",
+                    client_name=client_name,
+                    message_text=text_caption,
+                    message_id=str(telegram_msg_id) if telegram_msg_id else None,
+                    slack_channel=channel_id,
+                    slack_ts=ts,
+                    is_mapped=True,
+                )
 
         # Map for edits/deletes
         if telegram_msg_id:
@@ -868,6 +942,8 @@ def start_slack_socket_mode():
 
 async def main():
     global main_loop, aiohttp_session, sent_alerts, slack_bot_user_id, event_queue, slack_to_telegram_message_map, telegram_to_slack_message_map
+
+    init_db()
 
     sent_alerts = load_sent_alerts()
     slack_to_telegram_message_map = load_message_map()
