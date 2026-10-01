@@ -1,7 +1,7 @@
 # management_server.py — Socket Mode version
 
 import os
-import gspread
+import db_store
 import shlex
 import threading
 import time
@@ -54,11 +54,7 @@ def process_and_respond(response_url, command_text):
 
         platform, client_name, external_id, slack_channel_id = parts
 
-        gc = gspread.service_account(filename='credentials/service_account.json')
-        spreadsheet = gc.open("BitLink Client Mappings")
-        worksheet = spreadsheet.sheet1
-        new_row = [client_name, platform, external_id, slack_channel_id]
-        worksheet.append_row(new_row)
+        db_store.add_client_mapping(platform, client_name, external_id, slack_channel_id)
 
         send_refresh_signals()
 
@@ -84,29 +80,11 @@ def process_and_respond(response_url, command_text):
 # --- /pause-channel command ---
 def process_pause(response_url, channel_id):
     try:
-        gc = gspread.service_account(filename='credentials/service_account.json')
-        spreadsheet = gc.open("BitLink Client Mappings")
-        worksheet = spreadsheet.sheet1
-        cell = worksheet.find(channel_id)
-        if not cell:
-            payload = {"response_type": "ephemeral", "text": f"❌ Channel ID {channel_id} not found."}
-            requests.post(response_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
-            return
-
-        paused_col = None
-        for idx, col_name in enumerate(worksheet.row_values(1), start=1):
-            if col_name.lower() == "paused":
-                paused_col = idx
-                break
-
-        if paused_col:
-            worksheet.update_cell(cell.row, paused_col, "TRUE")
+        if db_store.set_client_paused(channel_id, True):
             send_refresh_signals()
             payload = {"response_type": "ephemeral", "text": f"✅ Channel {channel_id} paused."}
-            requests.post(response_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
         else:
-            payload = {"response_type": "ephemeral", "text": "❌ 'paused' column not found in sheet."}
-            requests.post(response_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
+            payload = {"response_type": "ephemeral", "text": f"❌ Channel ID {channel_id} not found."}
     except Exception as e:
         logging.error(f"Error in pause-channel: {e}")
         payload = {"response_type": "ephemeral", "text": f"❌ Error: {e}"}
@@ -115,29 +93,11 @@ def process_pause(response_url, channel_id):
 # --- /resume-channel command ---
 def process_resume(response_url, channel_id):
     try:
-        gc = gspread.service_account(filename='credentials/service_account.json')
-        spreadsheet = gc.open("BitLink Client Mappings")
-        worksheet = spreadsheet.sheet1
-        cell = worksheet.find(channel_id)
-        if not cell:
-            payload = {"response_type": "ephemeral", "text": f"❌ Channel ID {channel_id} not found."}
-            requests.post(response_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
-            return
-
-        paused_col = None
-        for idx, col_name in enumerate(worksheet.row_values(1), start=1):
-            if col_name.lower() == "paused":
-                paused_col = idx
-                break
-
-        if paused_col:
-            worksheet.update_cell(cell.row, paused_col, "FALSE")
+        if db_store.set_client_paused(channel_id, False):
             send_refresh_signals()
             payload = {"response_type": "ephemeral", "text": f"✅ Channel {channel_id} resumed."}
-            requests.post(response_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
         else:
-            payload = {"response_type": "ephemeral", "text": "❌ 'paused' column not found in sheet."}
-            requests.post(response_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
+            payload = {"response_type": "ephemeral", "text": f"❌ Channel ID {channel_id} not found."}
     except Exception as e:
         logging.error(f"Error in resume-channel: {e}")
         payload = {"response_type": "ephemeral", "text": f"❌ Error: {e}"}
@@ -145,10 +105,10 @@ def process_resume(response_url, channel_id):
 
 # --- Socket Mode command handlers ---
 def handle_add_client(client, req):
-    client.send_socket_mode_response({"envelope_id": req.envelope_id})
     data = req.payload
     if data.get("command") != "/add-client":
         return
+    client.send_socket_mode_response({"envelope_id": req.envelope_id})
     response_url = data.get("response_url")
     command_text = data.get("text")
     logging.info(f"Received /add-client: {command_text}")
@@ -156,10 +116,10 @@ def handle_add_client(client, req):
     thread.start()
 
 def handle_pause_channel(client, req):
-    client.send_socket_mode_response({"envelope_id": req.envelope_id})
     data = req.payload
     if data.get("command") != "/pause-channel":
         return
+    client.send_socket_mode_response({"envelope_id": req.envelope_id})
     response_url = data.get("response_url")
     channel_id = data.get("text", "").strip()
     logging.info(f"Received /pause-channel: {channel_id}")
@@ -167,10 +127,10 @@ def handle_pause_channel(client, req):
     thread.start()
 
 def handle_resume_channel(client, req):
-    client.send_socket_mode_response({"envelope_id": req.envelope_id})
     data = req.payload
     if data.get("command") != "/resume-channel":
         return
+    client.send_socket_mode_response({"envelope_id": req.envelope_id})
     response_url = data.get("response_url")
     channel_id = data.get("text", "").strip()
     logging.info(f"Received /resume-channel: {channel_id}")

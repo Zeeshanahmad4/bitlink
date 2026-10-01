@@ -1,6 +1,7 @@
+import os
 import google.generativeai as genai
 
-API_KEY = "AIzaSyA6PymEguEq_HpR1enCnDJORNZkQsXR51E"
+API_KEY = os.getenv("GEMINI_API_KEY")
 
 MASTER_PROMPT = """
 YOUR TASK:

@@ -20,7 +20,9 @@ app.use(bodyParser.json({ limit: '50mb' }));
 
 function log(...args) {
     const ts = new Date().toISOString().replace('T', ' ').replace('Z', '');
-    console.log(`[${ts}]`, ...args);
+    const msg = `[${ts}] ${args.join(' ')}\n`;
+    console.log(msg.trim());
+    try { fs.appendFileSync(path.join(__dirname, 'node_debug.log'), msg); } catch (e) {}
 }
 
 log("🚀 Starting WhatsApp Service with Baileys...");
@@ -165,13 +167,58 @@ async function extractMedia(msg) {
 
 function registerMessageHandlers() {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        if (type !== 'notify') return;
-
         for (const msg of messages) {
+            try {
+                // Removed debug logs
+            } catch(e) {}
+            
+            if (type !== 'notify') continue;
             const msgId = msg.key.id;
             if (!msgId || msg.key.fromMe) continue;
 
             const chatId = msg.key.remoteJid;
+
+            // Baileys sometimes nests protocol messages (like edits) inside an editedMessage wrapper
+            const protocolMsg = msg.message?.protocolMessage || msg.message?.editedMessage?.message?.protocolMessage;
+
+            if (protocolMsg) {
+                log(`[DEBUG_UPSERT_PROTOCOL] msg ${msgId} protocolMsg structure: ${JSON.stringify(protocolMsg)}`);
+            }
+
+            // Detect Delete (Revoke)
+            if (protocolMsg && (protocolMsg.type === 0 || protocolMsg.type === 'REVOKE')) {
+                const deletedKey = protocolMsg.key;
+                log(`[DELETE DETECTED] ${chatId}: msg ${deletedKey?.id}`);
+                if (deletedKey?.id) {
+                    try {
+                        await axios.post('http://127.0.0.1:8101/whatsapp-delete', { messageId: deletedKey.id });
+                    } catch (err) {
+                        log('Failed to notify bridge about delete:', err.message);
+                    }
+                }
+                continue;
+            }
+
+            // Detect Edit (Type 14 or MESSAGE_EDIT)
+            if (protocolMsg && (protocolMsg.type === 14 || protocolMsg.type === 'MESSAGE_EDIT')) {
+                const editedKey = protocolMsg.key;
+                const editedMessage = protocolMsg.editedMessage;
+                const newText = extractText({ message: editedMessage });
+                
+                if (newText && editedKey?.id) {
+                    log(`[EDIT DETECTED] ${chatId}: msg ${editedKey.id} → "${newText.substring(0, 50)}"`);
+                    try {
+                        await axios.post('http://127.0.0.1:8101/whatsapp-edit', {
+                            messageId: editedKey.id,
+                            newText: newText
+                        });
+                    } catch (err) {
+                        log('Failed to notify bridge about edit:', err.message);
+                    }
+                }
+                continue;
+            }
+
             const body = extractText(msg);
 
             const senderName = msg.pushName ||
@@ -222,16 +269,8 @@ function registerMessageHandlers() {
 
     sock.ev.on('messages.update', async (updates) => {
         for (const { key, update } of updates) {
-            if (!update || !update.message) {
-                log(`[DELETE DETECTED] ${key.remoteJid}: msg ${key.id}`);
-                try {
-                    await axios.post('http://127.0.0.1:8101/whatsapp-delete', {
-                        messageId: key.id,
-                    });
-                } catch (err) {
-                    log('Failed to notify bridge about delete:', err.message);
-                }
-            } else if (update.message) {
+            if (update.message) {
+                // log(`[DEBUG_UPDATE] ${key.id} structure: ${JSON.stringify(update.message)}`);
                 const newText = extractText({ message: update.message });
                 if (newText && key.id) {
                     log(`[EDIT DETECTED] ${key.remoteJid}: → "${newText.substring(0, 50)}"`);
@@ -368,7 +407,7 @@ app.post('/send-message', async (req, res) => {
                     ...(message ? { caption: message } : {}),
                     ...baseOpts
                 });
-            } else if (mimeType.startsWith('image/') && !['image/svg+xml', 'image/webp'].includes(mimeType)) {
+            } else if (mimeType.startsWith('image/') && !mimeType.includes('svg') && !mimeType.includes('webp')) {
                 sentMessage = await sock.sendMessage(chatId, {
                     image: buffer,
                     caption: message || '',

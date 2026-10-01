@@ -55,3 +55,10 @@ temp_downloads_telegram/
 
 # Telegram session (sensitive)
 bitlink_telegram.session
+backups
+sessions
+tests
+ecosystem.config.js
+nginx-bitlink.conf
+telegram_message_map.json
+

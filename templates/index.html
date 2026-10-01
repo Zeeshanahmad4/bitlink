@@ -1,0 +1,2707 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitlink Control Dashboard</title>
+    <link rel="icon" type="image/png" href="/static/favicon.png?v=1">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=1">
+    <!-- Google Fonts: Plus Jakarta Sans & Space Grotesk -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // "Bitlink Purple/Magenta". The standard Tailwind families are re-pointed
+        // at this palette so the whole dashboard retones from one place, and the
+        // semantic tokens below name the roles the design actually uses.
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+                        display: ['"Plus Jakarta Sans"', 'sans-serif'],
+                        mono: ['"Space Grotesk"', 'monospace'],
+                    },
+                    colors: {
+                        // Semantic roles
+                        canvas: '#F8F7FF',        // Main background
+                        frame: '#F8F7FF',         // App shell
+                        card: '#FFFFFF',          // Card background
+                        sidebar: '#F0EDFF',       // Sidebar background
+                        line: '#E5E0F5',          // Card border
+                        divider: '#ECE8F6',       // Table divider
+                        ink: '#24105F',           // Primary text
+                        muted: '#756B92',         // Secondary text
+                        // Text-safe companion: #756B92 is 4.27:1 on the sidebar,
+                        // just under AA, so glyphs use this step of the same hue.
+                        mutedink: '#6A5F86',
+                        primary: '#6D28D9',       // Primary accent
+                        primaryhover: '#5B21B6',  // Primary hover
+                        bright: '#7C3AED',        // Electric purple
+                        magenta: '#EC0ACB',       // Magenta accent
+                        pink: '#F02BCF',          // Pink highlight
+                        selbg: '#E9DEFF',         // Selected nav background
+                        seltext: '#6D28D9',       // Selected nav text
+                        okbg: '#F0E8FF',          // Success background
+                        oktext: '#6D28D9',        // Success text
+                        link: '#5B4BE7',          // Links / Slack channels
+                        searchbg: '#F4F1FF',      // Search background
+                        inputline: '#DDD6F3',     // Input border
+                        gateway: '#4C1D95',        // Gateway gradient, dark end
+                        gatewaymid: '#6D28D9',     // Gateway gradient, middle
+                        gateway2: '#7C3AED',      // Gateway gradient, violet end
+                        gatewayaccent: '#EC0ACB', // Gateway accent
+                        warn: '#F59E0B',          // Warning
+                        danger: '#E8455F',        // Error
+                        // Legacy names kept so existing markup still resolves
+                        darkside: '#24105F',
+                        carddark: '#24105F',
+                        subtle: '#E5E0F5',
+
+                        // Purple-greys: replaces Tailwind's slate.
+                        slate: {
+                            50: '#F8F7FF',
+                            100: '#F0EDFF',
+                            200: '#E5E0F5',
+                            300: '#DDD6F3',
+                            400: '#8E85AB',
+                            500: '#6A5F86',
+                            600: '#5A4F76',
+                            700: '#453A61',
+                            800: '#342A4B',
+                            900: '#24105F',
+                        },
+                        // Violet: replaces Tailwind's emerald.
+                        emerald: {
+                            50: '#F0E8FF',
+                            100: '#E9DEFF',
+                            200: '#D8CCFB',
+                            300: '#B79BF5',
+                            400: '#7C3AED',
+                            500: '#6D28D9',
+                            600: '#5B21B6',
+                            700: '#4C1D95',
+                            800: '#3C157A',
+                            900: '#2E0F5E',
+                        },
+                        // Purple-blue: replaces indigo / sky / blue / violet.
+                        indigo: {
+                            50: '#F2F0FE', 100: '#E5E2FD', 200: '#CFC9FA',
+                            300: '#AFA6F5', 400: '#8B7FEE', 500: '#5B4BE7',
+                            600: '#4A3BC4', 700: '#3B2F9B', 800: '#2D2478',
+                            900: '#1F1956',
+                        },
+                        sky: {
+                            50: '#F2F0FE', 100: '#E5E2FD', 200: '#CFC9FA',
+                            300: '#AFA6F5', 400: '#8B7FEE', 500: '#5B4BE7',
+                            600: '#4A3BC4', 700: '#3B2F9B', 800: '#2D2478',
+                            900: '#1F1956',
+                        },
+                        blue: {
+                            50: '#F2F0FE', 100: '#E5E2FD', 200: '#CFC9FA',
+                            300: '#AFA6F5', 400: '#8B7FEE', 500: '#5B4BE7',
+                            600: '#4A3BC4', 700: '#3B2F9B', 800: '#2D2478',
+                            900: '#1F1956',
+                        },
+                        violet: {
+                            50: '#F2F0FE', 100: '#E5E2FD', 200: '#CFC9FA',
+                            300: '#AFA6F5', 400: '#8B7FEE', 500: '#5B4BE7',
+                            600: '#4A3BC4', 700: '#3B2F9B', 800: '#2D2478',
+                            900: '#1F1956',
+                        },
+                        // Danger. Not part of the purple spec, so this stays a
+                        // red: an error still has to read as an error next to a
+                        // magenta accent.
+                        rose: {
+                            50: '#FEF2F6', 100: '#FDE2EA', 200: '#FAC8D6',
+                            300: '#F5A2B8', 400: '#F06A8C', 500: '#E8455F',
+                            600: '#C92F48', 700: '#A32339', 800: '#7E1A2C',
+                            900: '#5C1320',
+                        },
+                        // Warning. Also not in the spec; kept as soft amber.
+                        amber: {
+                            50: '#FFF9EB', 100: '#FEF3D6', 200: '#FDE5AE',
+                            300: '#FBD37D', 400: '#F9B94A', 500: '#F59E0B',
+                            600: '#DC7F06', 700: '#B76405', 800: '#8F4D04',
+                            900: '#6B3903',
+                        },
+                        // Gold, for the leaderboard podium.
+                        yellow: {
+                            50: '#FFF9EB', 100: '#FEF3C7', 200: '#FDE68A',
+                            300: '#FBBF24', 400: '#F59E0B', 500: '#D97706',
+                            600: '#B45309', 700: '#92400E', 800: '#78350F',
+                            900: '#5B2A0C',
+                        },
+                    },
+                    boxShadow: {
+                        card: '0 1px 2px rgba(36, 16, 95, 0.05), 0 4px 12px rgba(36, 16, 95, 0.06)',
+                        raised: '0 4px 16px rgba(36, 16, 95, 0.10)',
+                        // Depth ladder: lift on hover, and a violet-tinted glow
+                        // reserved for the active/selected state.
+                        lift: '0 2px 4px rgba(36, 16, 95, 0.04), 0 12px 28px rgba(36, 16, 95, 0.10)',
+                        liftlg: '0 4px 8px rgba(36, 16, 95, 0.05), 0 24px 48px rgba(36, 16, 95, 0.14)',
+                        glow: '0 0 0 1px rgba(109, 40, 217, 0.28), 0 8px 24px rgba(109, 40, 217, 0.20)',
+                        glowsm: '0 0 0 1px rgba(109, 40, 217, 0.22), 0 4px 12px rgba(109, 40, 217, 0.14)',
+                        // Frosted layer for the sticky header.
+                        glass: '0 1px 0 rgba(255,255,255,0.65) inset, 0 4px 20px rgba(36, 16, 95, 0.08)',
+                        overlay: '0 24px 64px -12px rgba(36, 16, 95, 0.28), 0 0 0 1px rgba(36, 16, 95, 0.06)',
+                    },
+                    keyframes: {
+                        'fade-up': {
+                            '0%': { opacity: '0', transform: 'translateY(10px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' },
+                        },
+                        'fade-in': {
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' },
+                        },
+                        'scale-in': {
+                            '0%': { opacity: '0', transform: 'scale(0.96)' },
+                            '100%': { opacity: '1', transform: 'scale(1)' },
+                        },
+                        'sheen': {
+                            '0%': { transform: 'translateX(-120%) skewX(-18deg)' },
+                            '100%': { transform: 'translateX(320%) skewX(-18deg)' },
+                        },
+                        'shimmer': {
+                            '0%': { backgroundPosition: '-480px 0' },
+                            '100%': { backgroundPosition: '480px 0' },
+                        },
+                        'pulse-ring': {
+                            '0%': { transform: 'scale(0.9)', opacity: '0.7' },
+                            '70%': { transform: 'scale(1.9)', opacity: '0' },
+                            '100%': { transform: 'scale(1.9)', opacity: '0' },
+                        },
+                        'float-slow': {
+                            '0%,100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-5px)' },
+                        },
+                    },
+                    animation: {
+                        'fade-up': 'fade-up 0.45s cubic-bezier(0.16, 1, 0.3, 1) both',
+                        'fade-in': 'fade-in 0.3s ease-out both',
+                        'scale-in': 'scale-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) both',
+                        'sheen': 'sheen 2.4s ease-in-out infinite',
+                        'shimmer': 'shimmer 1.4s linear infinite',
+                        'pulse-ring': 'pulse-ring 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'float-slow': 'float-slow 6s ease-in-out infinite',
+                    },
+                    backgroundImage: {
+                        'brand-sheen': 'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.28) 50%, transparent 70%)',
+                        'brand-rule': 'linear-gradient(90deg, #6D28D9 0%, #EC0ACB 50%, #6D28D9 100%)',
+                    },
+                    borderRadius: {
+                        '4xl': '2.5rem',
+                        '3xl': '1.75rem',
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Alpine.js CDN -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <!-- FontAwesome / Lucide style Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        [x-cloak] { display: none !important; }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F8F7FF; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #DDD6F3; border-radius: 9999px; }
+        ::-webkit-scrollbar-thumb:hover { background: #8E85AB; }
+
+        /* The signature Bitlink transition: deep violet -> electric violet ->
+           magenta, on the 135 degree axis. The animated definition further
+           down adds the slow drift, so it is not repeated here. */
+        /* Softer version for large surfaces where the full ramp is too loud. */
+        .bg-gateway-soft {
+            background: linear-gradient(
+                135deg,
+                #4C1D95 0%,
+                #6D28D9 60%,
+                #7C3AED 100%
+            );
+        }
+
+        .btn-emerald {
+            background-color: #6D28D9;
+            color: #ffffff;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .btn-emerald:hover {
+            background-color: #5B21B6;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(109, 40, 217, 0.35);
+        }
+        .btn-emerald:active {
+            transform: translateY(0px) scale(0.98);
+        }
+
+        .badge-emerald {
+            background-color: #F0E8FF;
+            color: #6D28D9;
+            border: 1px solid rgba(109, 40, 217, 0.2);
+        }
+        .badge-emerald:hover { background-color: #6D28D9; color: #ffffff; }
+
+        .border-emerald-glow {
+            border-color: #6D28D9;
+            box-shadow: 0 0 0 1px #6D28D9, 0 4px 14px rgba(109, 40, 217, 0.15);
+        }
+
+        /* ==================================================================
+           MOTION + DEPTH LAYER
+           Every animation here is decorative. All of it is switched off
+           under prefers-reduced-motion, and none of it changes layout, so
+           turning it off cannot move a control the user was aiming at.
+           ================================================================== */
+
+        /* One easing curve across the whole app, so hover, entrance and
+           overlay motion all feel like the same product. */
+        :root {
+            --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+            --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+            --brand-violet: #6D28D9;
+            --brand-magenta: #EC0ACB;
+        }
+
+        /* Keyboard focus must be obvious: the mouse hover is not available,
+           and the selected nav item is already tinted. */
+        :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+            outline: 2px solid var(--brand-violet);
+            outline-offset: 2px;
+            border-radius: 0.5rem;
+        }
+
+        /* Staggered entrance. Children opt in by carrying .stagger-item; the
+           delay is a pure function of index, set inline as --i. */
+        .stagger-item {
+            animation: bl-fade-up 0.5s var(--ease-out) both;
+            animation-delay: calc(var(--i, 0) * 45ms);
+        }
+        @keyframes bl-fade-up {
+            from { opacity: 0; transform: translateY(10px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Rows: a hairline that brightens on hover plus a short settle. Keep
+           the transition on transform/opacity/box-shadow only, so hovering a
+           long table never triggers layout. */
+        .row-hover {
+            transition: background-color 0.18s ease, box-shadow 0.18s ease;
+        }
+        .row-hover:hover {
+            background-color: #F8F7FF;
+            box-shadow: inset 3px 0 0 var(--brand-violet);
+        }
+
+        /* Cards lift on hover and settle back with a slight overshoot-free
+           ease. transform is compositor-only, so this stays cheap. */
+        .card-lift {
+            transition: transform 0.28s var(--ease-out), box-shadow 0.28s var(--ease-out),
+                        border-color 0.28s ease;
+            will-change: transform;
+        }
+        .card-lift:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 4px 8px rgba(36, 16, 95, 0.05), 0 24px 48px rgba(36, 16, 95, 0.14);
+            border-color: #DDD6F3;
+        }
+
+        /* Frosted sticky header. The blur is what sells the layer; the tint
+           keeps text legible over scrolling content. */
+        .glass-bar {
+            background: rgba(248, 247, 255, 0.72);
+            backdrop-filter: saturate(180%) blur(14px);
+            -webkit-backdrop-filter: saturate(180%) blur(14px);
+            border-bottom: 1px solid rgba(229, 224, 245, 0.9);
+        }
+
+        /* Light sweep across the dark gateway card on hover. */
+        .sheen-host { position: relative; overflow: hidden; }
+        .sheen-host::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background-image: linear-gradient(105deg, transparent 30%,
+                              rgba(255, 255, 255, 0.26) 50%, transparent 70%);
+            transform: translateX(-120%) skewX(-18deg);
+            pointer-events: none;
+        }
+        .sheen-host:hover::after { animation: bl-sheen 1.1s var(--ease-out) 1; }
+        @keyframes bl-sheen {
+            from { transform: translateX(-120%) skewX(-18deg); }
+            to   { transform: translateX(320%) skewX(-18deg); }
+        }
+
+        /* The gateway gradient drifts very slightly. Slow enough to read as
+           "alive" rather than "loading". */
+        .bg-gateway-gradient {
+            background: linear-gradient(135deg, #4C1D95 0%, #6D28D9 45%, #EC0ACB 100%);
+            background-size: 220% 220%;
+            animation: bl-drift 18s ease-in-out infinite;
+        }
+        @keyframes bl-drift {
+            0%, 100% { background-position: 0% 50%; }
+            50%      { background-position: 100% 50%; }
+        }
+
+        /* Loading skeletons. Background-position only: no layout, no reflow. */
+        .skeleton {
+            background: linear-gradient(90deg, #F0EDFF 0%, #F8F7FF 40%, #F0EDFF 80%);
+            background-size: 480px 100%;
+            animation: bl-shimmer 1.4s linear infinite;
+            border-radius: 0.5rem;
+        }
+        @keyframes bl-shimmer {
+            from { background-position: -480px 0; }
+            to   { background-position: 480px 0; }
+        }
+
+        /* Breathing dot for live indicators, without the harsh Tailwind pulse
+           which changes opacity on a fixed box and reads as a flicker. */
+        .live-dot { position: relative; }
+        .live-dot::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 9999px;
+            background: inherit;
+            animation: bl-ring 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes bl-ring {
+            0%        { transform: scale(0.9); opacity: 0.65; }
+            70%, 100% { transform: scale(2.2); opacity: 0; }
+        }
+
+        /* Icon buttons: nudge the glyph instead of the whole hit area, so the
+           click target stays exactly where it was drawn. */
+        .icon-btn {
+            transition: background-color 0.18s ease, color 0.18s ease, transform 0.18s var(--ease-out);
+        }
+        .icon-btn:hover { transform: translateY(-1px) scale(1.06); }
+        .icon-btn:active { transform: translateY(0) scale(0.94); }
+
+        /* Selected nav: a violet rail that grows from the centre. */
+        .nav-rail { position: relative; }
+        .nav-rail::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 50%;
+            width: 3px;
+            height: 0;
+            border-radius: 0 9999px 9999px 0;
+            background: linear-gradient(180deg, var(--brand-violet), var(--brand-magenta));
+            transform: translateY(-50%);
+            transition: height 0.26s var(--ease-out);
+        }
+        .nav-rail[data-active="true"]::before { height: 60%; }
+
+        /* Empty / error states. */
+        .state-tile {
+            border: 1px dashed #DDD6F3;
+            background: linear-gradient(180deg, #FBFAFF 0%, #F8F7FF 100%);
+            border-radius: 1.25rem;
+        }
+        .state-tile:hover { border-color: #B79BF5; }
+
+        /* Tabular figures stop stat numbers jittering while they count up. */
+        .tnum { font-variant-numeric: tabular-nums; }
+
+        /* Overlay + dialog entrance. */
+        .overlay-in { animation: bl-fade 0.2s ease-out both; }
+        .dialog-in { animation: bl-dialog 0.26s var(--ease-out) both; }
+        @keyframes bl-fade { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes bl-dialog {
+            from { opacity: 0; transform: translateY(14px) scale(0.97); }
+            to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        /* Custom scrollbars, tinted to the brand. */
+        .scroll-brand::-webkit-scrollbar { width: 8px; height: 8px; }
+        .scroll-brand::-webkit-scrollbar-track { background: transparent; }
+        .scroll-brand::-webkit-scrollbar-thumb {
+            background: #DDD6F3; border-radius: 9999px;
+            border: 2px solid transparent; background-clip: content-box;
+        }
+        .scroll-brand::-webkit-scrollbar-thumb:hover { background: #B79BF5; background-clip: content-box; }
+
+        /* Honour the OS setting. This is the last rule so it wins over every
+           animation declared above it. */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.001ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.001ms !important;
+                scroll-behavior: auto !important;
+            }
+            /* Restore the entrance transform so nothing is left invisible:
+               `both` fill mode would otherwise pin opacity at 0. */
+            .stagger-item, .dialog-in, .overlay-in {
+                animation: none !important;
+                opacity: 1 !important;
+                transform: none !important;
+            }
+        }
+    </style>
+</head>
+<body class="h-screen w-screen m-0 p-0 overflow-hidden antialiased selection:bg-primary selection:text-white" x-data="dashboardApp()" x-init="init()">
+
+    <!-- =================================================================== -->
+    <!-- 0. BEAUTIFUL LOGIN SCREEN (MATCHES DASHBOARD PALETTE & THEME) -->
+    <!-- =================================================================== -->
+    <div x-cloak x-show="!isAuthenticated && !authChecking" 
+         class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-canvas antialiased"
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0 scale-95"
+         x-transition:enter-end="opacity-100 scale-100"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100 scale-100"
+         x-transition:leave-end="opacity-0 scale-95">
+
+        <!-- Login Card Container -->
+        <div class="w-full max-w-md bg-card rounded-4xl shadow-raised border border-line p-8 sm:p-10 relative overflow-hidden flex flex-col items-center">
+            
+            <!-- Top App Logo -->
+            <img src="/static/login_logo.png"
+                 alt="Bitlink"
+                 draggable="false"
+                 class="w-64 max-w-full h-auto mb-6 select-none pointer-events-none">
+
+            <!-- Title & Subtitle -->
+            <h1 class="text-2xl font-bold text-slate-900 tracking-tight mb-2 text-center">Bitlink Control Portal</h1>
+            <p class="text-sm text-slate-500 font-medium text-center mb-8">Sign in with your credentials to manage bridges and CRM pipeline</p>
+
+            <!-- Error Banner -->
+            <div x-show="authError" 
+                 x-transition 
+                 class="w-full mb-6 px-4 py-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center space-x-2.5">
+                <i class="fa-solid fa-circle-exclamation text-sm text-rose-500 flex-shrink-0"></i>
+                <span x-text="authError"></span>
+            </div>
+
+            <!-- Form -->
+            <form @submit.prevent="submitLogin()" class="w-full space-y-4">
+                <!-- ID / Username Input -->
+                <div class="space-y-1.5">
+                    <label class="text-xs font-bold uppercase tracking-wider text-slate-500 px-1">User ID / Username</label>
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                            <i class="fa-solid fa-user text-sm"></i>
+                        </div>
+                        <input 
+                            type="text" 
+                            x-model="loginForm.id" 
+                            placeholder="e.g. admin" 
+                            required
+                            class="w-full pl-11 pr-4 py-3 rounded-2xl bg-white border border-subtle text-slate-900 placeholder-slate-400 font-medium text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent transition-all shadow-sm">
+                    </div>
+                </div>
+
+                <!-- Password Input -->
+                <div class="space-y-1.5">
+                    <label class="text-xs font-bold uppercase tracking-wider text-slate-500 px-1">Password</label>
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                            <i class="fa-solid fa-lock text-sm"></i>
+                        </div>
+                        <input 
+                            type="password" 
+                            x-model="loginForm.password" 
+                            placeholder="••••••••" 
+                            required
+                            class="w-full pl-11 pr-4 py-3 rounded-2xl bg-white border border-subtle text-slate-900 placeholder-slate-400 font-medium text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent transition-all shadow-sm">
+                    </div>
+                </div>
+
+                <!-- Submit Button -->
+                <button 
+                    type="submit" 
+                    :disabled="authLoading"
+                    class="w-full py-3.5 px-6 rounded-2xl btn-emerald active:scale-[0.98] font-bold text-sm shadow-lg shadow-emerald-900/20 flex items-center justify-center space-x-2 transition-all duration-200 mt-6 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <template x-if="!authLoading">
+                        <span class="flex items-center space-x-2">
+                            <span>Sign In to Dashboard</span>
+                            <i class="fa-solid fa-arrow-right text-xs"></i>
+                        </span>
+                    </template>
+                    <template x-if="authLoading">
+                        <span class="flex items-center space-x-2">
+                            <i class="fa-solid fa-circle-notch fa-spin text-sm"></i>
+                            <span>Verifying Credentials...</span>
+                        </span>
+                    </template>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- MAIN FLOATING DASHBOARD CANVAS -->
+    <div x-show="isAuthenticated" 
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0 scale-95"
+         x-transition:enter-end="opacity-100 scale-100"
+         class="w-full h-full bg-frame flex overflow-hidden relative">
+
+        <!-- =================================================================== -->
+        <!-- 1. LEFT CHARCOAL PILL SIDEBAR -->
+        <!-- =================================================================== -->
+        <aside class="w-56 bg-sidebar flex flex-col justify-between py-6 px-3 shadow-card flex-shrink-0 z-30 border-r border-line">
+            
+            <!-- Top App Icon & Brand -->
+            <div class="flex flex-col space-y-6">
+                <button 
+                    @click="activeTag = 'delivery'; currentView = 'delivery'"
+                    class="flex items-center space-x-3 px-2 py-2 rounded-2xl hover:bg-white transition-all duration-200 active:scale-[0.98]">
+                    <img src="/static/favicon.png" alt="" class="h-10 w-10 object-contain flex-shrink-0">
+                    <span class="text-ink font-bold text-sm tracking-wide">Bitlink Control</span>
+                </button>
+
+                <!-- Divider -->
+                <div class="h-px bg-line mx-2"></div>
+
+                <!-- Nav Group -->
+                <nav class="flex flex-col space-y-1">
+                    <!-- Delivery Nav Item -->
+                    <button 
+                        @click="activeTag = 'delivery'; currentView = 'delivery'"
+                        :class="activeTag === 'delivery' && currentView === 'delivery' ? 'bg-selbg text-seltext shadow-glowsm' : 'text-muted hover:text-ink hover:bg-white'"
+                        :data-active="activeTag === 'delivery' && currentView === 'delivery'"
+                        class="nav-rail flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all duration-200">
+                        <i class="fa-solid fa-truck-ramp-box text-base w-5 text-center"></i>
+                        <span class="text-sm font-medium">Delivery</span>
+                    </button>
+
+                    <!-- Sales CRM Leads Nav Item -->
+                    <button 
+                        @click="activeTag = 'sales'; currentView = 'leads'"
+                        :class="activeTag === 'sales' && currentView === 'leads' ? 'bg-selbg text-seltext shadow-glowsm' : 'text-muted hover:text-ink hover:bg-white'"
+                        :data-active="activeTag === 'sales' && currentView === 'leads'"
+                        class="nav-rail flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all duration-200">
+                        <i class="fa-solid fa-briefcase text-base w-5 text-center"></i>
+                        <span class="text-sm font-medium">Sales CRM</span>
+                    </button>
+
+                    <!-- Contacts Nav Item -->
+                    <button 
+                        @click="activeTag = 'sales'; currentView = 'contacts'"
+                        :class="activeTag === 'sales' && currentView === 'contacts' ? 'bg-selbg text-seltext shadow-glowsm' : 'text-muted hover:text-ink hover:bg-white'"
+                        :data-active="activeTag === 'sales' && currentView === 'contacts'"
+                        class="nav-rail flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all duration-200">
+                        <i class="fa-solid fa-address-book text-base w-5 text-center"></i>
+                        <span class="text-sm font-medium">Contacts</span>
+                    </button>
+
+                    <!-- Sales Pool Nav Item -->
+                    <button 
+                        @click="activeTag = 'sales'; currentView = 'pool'"
+                        :class="activeTag === 'sales' && currentView === 'pool' ? 'bg-selbg text-seltext shadow-glowsm' : 'text-muted hover:text-ink hover:bg-white'"
+                        :data-active="activeTag === 'sales' && currentView === 'pool'"
+                        class="nav-rail flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all duration-200">
+                        <i class="fa-solid fa-users text-base w-5 text-center"></i>
+                        <span class="text-sm font-medium">Member Pool</span>
+                    </button>
+
+                    <!-- Settings & Controls Nav Item -->
+                    <button 
+                        @click="activeTag = 'sales'; currentView = 'settings'"
+                        :class="activeTag === 'sales' && currentView === 'settings' ? 'bg-selbg text-seltext shadow-glowsm' : 'text-muted hover:text-ink hover:bg-white'"
+                        :data-active="activeTag === 'sales' && currentView === 'settings'"
+                        class="nav-rail flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all duration-200">
+                        <i class="fa-solid fa-sliders text-base w-5 text-center"></i>
+                        <span class="text-sm font-medium">Settings</span>
+                    </button>
+
+                    <!-- Blocklist Nav Item -->
+                    <button 
+                        @click="activeTag = 'sales'; currentView = 'blocklist'"
+                        :class="activeTag === 'sales' && currentView === 'blocklist' ? 'bg-selbg text-seltext shadow-glowsm' : 'text-muted hover:text-ink hover:bg-white'"
+                        :data-active="activeTag === 'sales' && currentView === 'blocklist'"
+                        class="nav-rail flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all duration-200">
+                        <i class="fa-solid fa-ban text-base w-5 text-center"></i>
+                        <span class="text-sm font-medium">Blocklist</span>
+                    </button>
+
+                    <!-- Snippets Nav Item -->
+                    <button 
+                        @click="activeTag = 'sales'; currentView = 'snippets'"
+                        :class="activeTag === 'sales' && currentView === 'snippets' ? 'bg-selbg text-seltext shadow-glowsm' : 'text-muted hover:text-ink hover:bg-white'"
+                        :data-active="activeTag === 'sales' && currentView === 'snippets'"
+                        class="nav-rail flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all duration-200">
+                        <i class="fa-solid fa-comment-dots text-base w-5 text-center"></i>
+                        <span class="text-sm font-medium">Snippets</span>
+                    </button>
+
+                    <!-- Leaderboard Nav Item -->
+                    <button 
+                        @click="activeTag = 'sales'; currentView = 'leaderboard'"
+                        :class="activeTag === 'sales' && currentView === 'leaderboard' ? 'bg-selbg text-seltext shadow-glowsm' : 'text-muted hover:text-ink hover:bg-white'"
+                        :data-active="activeTag === 'sales' && currentView === 'leaderboard'"
+                        class="nav-rail flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all duration-200">
+                        <i class="fa-solid fa-trophy text-base w-5 text-center"></i>
+                        <span class="text-sm font-medium">Leaderboard</span>
+                    </button>
+                </nav>
+            </div>
+
+            <!-- Bottom Gateway Indicators & Avatar -->
+            <div class="flex flex-col space-y-3">
+                <!-- Divider -->
+                <div class="h-px bg-line mx-2"></div>
+
+                <!-- Admin Avatar & Logout -->
+                <div class="flex items-center justify-between px-2">
+                    <div class="flex items-center space-x-3">
+                        <div class="h-9 w-9 rounded-full bg-gradient-to-tr from-slate-700 to-slate-500 ring-2 ring-white flex items-center justify-center font-bold text-xs text-white uppercase flex-shrink-0" x-text="currentUser ? currentUser.substring(0, 2) : 'AD'">
+                            AD
+                        </div>
+                        <span class="text-xs font-medium text-muted truncate" x-text="currentUser || 'Admin'">Admin</span>
+                    </div>
+                    <button 
+                        @click="logout()"
+                        class="h-8 w-8 rounded-lg bg-white hover:bg-rose-50 text-muted hover:text-rose-600 flex items-center justify-center transition-all duration-200"
+                        title="Logout">
+                        <i class="fa-solid fa-arrow-right-from-bracket text-xs"></i>
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- =================================================================== -->
+        <!-- 2. MAIN APP CONTENT AREA -->
+        <!-- =================================================================== -->
+        <div class="flex-1 flex flex-col h-full overflow-y-auto scroll-brand">
+            
+            <!-- TOP BAR: Title Header & Primary Action Button -->
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-6 lg:px-10 pt-8 pb-6 glass-bar sticky top-0 z-30">
+                <div>
+                    <h1 class="text-3xl lg:text-4xl font-extrabold text-slate-900 tracking-tight flex items-center flex-wrap gap-2.5">
+                        <span>Managing Your Team and Gateway Workflows</span>
+                    </h1>
+                </div>
+
+                <!-- Top Right Controls -->
+                <div class="flex items-center space-x-3">
+                    <button 
+                        @click="refreshAll()"
+                        class="h-10 w-10 rounded-full bg-white hover:bg-selbg border border-slate-200/80 text-slate-600 hover:text-primary flex items-center justify-center transition shadow-sm hover:shadow-glowsm icon-btn" 
+                        title="Refresh All System Data">
+                        <i class="fa-solid fa-rotate text-sm" :class="isLoading ? 'fa-spin text-primary' : ''"></i>
+                    </button>
+
+                    <!-- Main Action Pill Button (Per View) -->
+                    <template x-if="currentView === 'delivery'">
+                        <button 
+                            @click="isHandoffTableModalOpen = true" 
+                            class="inline-flex items-center space-x-2 px-5 py-2.5 rounded-full text-xs font-bold btn-emerald shadow-md transition active:scale-95">
+                            <i class="fa-solid fa-plus text-xs"></i>
+                            <span>Add Delivery Client</span>
+                        </button>
+                    </template>
+
+                    <template x-if="currentView === 'pool'">
+                        <button 
+                            @click="openAddRepModal()" 
+                            class="inline-flex items-center space-x-2 px-5 py-2.5 rounded-full text-xs font-bold btn-emerald shadow-md transition active:scale-95">
+                            <i class="fa-solid fa-user-plus text-xs"></i>
+                            <span>Add Sales Rep</span>
+                        </button>
+                    </template>
+
+                    <template x-if="currentView === 'settings'">
+                        <button 
+                            @click="saveSettings()" 
+                            class="inline-flex items-center space-x-2 px-5 py-2.5 rounded-full text-xs font-bold btn-emerald shadow-md transition active:scale-95">
+                            <i class="fa-solid fa-floppy-disk text-xs"></i>
+                            <span>Save Settings</span>
+                        </button>
+                    </template>
+
+                    <template x-if="currentView === 'blocklist'">
+                        <button 
+                            @click="openAddBlocklistModal()" 
+                            class="inline-flex items-center space-x-2 px-5 py-2.5 rounded-full text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 shadow-md transition active:scale-95">
+                            <i class="fa-solid fa-ban text-xs"></i>
+                            <span>Block Number</span>
+                        </button>
+                    </template>
+
+                    <template x-if="currentView === 'snippets'">
+                        <button 
+                            @click="openAddSnippetModal()" 
+                            class="inline-flex items-center space-x-2 px-5 py-2.5 rounded-full text-xs font-bold btn-emerald shadow-md transition active:scale-95">
+                            <i class="fa-solid fa-plus text-xs"></i>
+                            <span>Add Snippet</span>
+                        </button>
+                    </template>
+                </div>
+            </div>
+
+            <!-- HORIZONTAL PILL SUB-NAVIGATION TABS (Removed — sidebar handles navigation) -->
+
+            <!-- Content well: horizontal padding lives here now that the top
+                 bar is a full-bleed sticky layer. -->
+            <div class="px-6 lg:px-10 pb-10">
+
+            <!-- =============================================================== -->
+            <!-- 3 STATS PROMO HERO CARDS (Matching Reference Layout) -->
+            <!-- =============================================================== -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mt-6 mb-8">
+                
+                <!-- Card 1: White Clean Metric Card -->
+                <div class="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-card flex flex-col justify-between card-lift stagger-item group" style="--i:0">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-2.5">
+                            <div class="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-xs transition-colors duration-300 group-hover:bg-selbg">
+                                <i class="fa-solid fa-layer-group"></i>
+                            </div>
+                            <span class="text-xs font-bold text-slate-800 tracking-wide uppercase">Active Bridges</span>
+                        </div>
+                        <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-okbg text-oktext border border-slate-200 font-mono inline-flex items-center gap-1.5">
+                            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 live-dot"></span>
+                            100% Operational
+                        </span>
+                    </div>
+
+                    <div class="mt-4">
+                        <div class="flex items-baseline space-x-2">
+                            <span class="text-4xl font-extrabold text-slate-900 tracking-tight tnum" x-text="statBridges">0</span>
+                            <span class="text-xs text-slate-400 font-mono">/ Live Channels</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Card 2: White/Dark Clean Metric Card -->
+                <div class="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-card flex flex-col justify-between card-lift stagger-item" style="--i:1">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-2.5">
+                            <div class="h-8 w-8 rounded-full bg-okbg flex items-center justify-center text-oktext text-xs">
+                                <i class="fa-solid fa-arrow-right-arrow-left"></i>
+                            </div>
+                            <span class="text-xs font-bold text-slate-800 tracking-wide uppercase">Sales Pipeline</span>
+                        </div>
+                        <span class="text-xs font-bold px-2.5 py-0.5 rounded-full badge-emerald font-mono" x-text="salesLeads.filter(l => l.stage === 'won').length + ' Closed Won'">0 Won</span>
+                    </div>
+
+                    <div class="mt-4">
+                        <div class="flex items-baseline space-x-2">
+                            <span class="text-4xl font-extrabold text-slate-900 tracking-tight tnum" x-text="statLeads">0</span>
+                            <span class="text-xs text-slate-400 font-mono">/ Total Inbound Leads</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Card 3: Dark Aesthetic Feature Card -->
+                <div class="bg-gateway-gradient rounded-3xl p-6 border border-gateway shadow-raised flex flex-col justify-between relative overflow-hidden group sheen-host stagger-item" style="--i:2">
+                    <div class="z-10">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs font-mono uppercase tracking-widest text-magenta font-bold">Autonomous Relay</span>
+                            <i class="fa-solid fa-arrow-trend-up text-magenta text-xs transition-transform duration-500 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"></i>
+                        </div>
+                        <h3 class="text-lg font-bold text-white leading-tight">Bitlink Gateway<br />Relay Engine</h3>
+                    </div>
+
+                    <div class="z-10 mt-6 flex items-center justify-between">
+                        <div class="flex items-center space-x-2">
+                            <span class="h-2.5 w-2.5 rounded-full bg-magenta live-dot"></span>
+                            <span class="text-xs text-slate-300 font-mono">Zero Message Drops</span>
+                        </div>
+                    </div>
+
+                    <!-- Subtle background aesthetic light ring -->
+                    <div class="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-gradient-to-tr from-emerald-500/20 to-transparent pointer-events-none"></div>
+                </div>
+
+            </div>
+
+            <!-- =============================================================== -->
+            <!-- MAIN VIEW CONTAINER -->
+            <!-- =============================================================== -->
+            <div class="bg-white rounded-3xl p-6 lg:p-8 border border-slate-200/80 shadow-sm flex-1">
+                
+                <!-- ----------------------------------------------------------- -->
+                <!-- VIEW 1: DELIVERY MAPPINGS -->
+                <!-- ----------------------------------------------------------- -->
+                <div x-show="activeTag === 'delivery' && currentView === 'delivery'" class="" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
+                    
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                        <div>
+                            <h2 class="text-lg font-bold text-slate-900 tracking-tight">Delivery Client Mappings</h2>
+                            <p class="text-xs text-slate-500 mt-0.5">Permanent communication bridges for delivery and engineering teams.</p>
+                        </div>
+
+                        <!-- Search & Filter Controls -->
+                        <div class="flex items-center space-x-2.5">
+                            <div class="relative">
+                                <input 
+                                    type="text" 
+                                    x-model="deliverySearch" 
+                                    placeholder="Search delivery clients..." 
+                                    class="w-64 pl-8 pr-3 py-1.5 bg-searchbg border border-inputline rounded-full text-xs text-ink placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary">
+                                <i class="fa-solid fa-magnifying-glass text-slate-400 text-xs absolute left-3 top-2.5"></i>
+                            </div>
+
+                            <select x-model="deliveryPlatformFilter" class="bg-slate-100/80 border border-slate-200 rounded-full px-3 py-1.5 text-xs font-semibold text-slate-700 focus:outline-none">
+                                <option value="ALL">All Platforms</option>
+                                <option value="WhatsApp">WhatsApp</option>
+                                <option value="Telegram">Telegram</option>
+                                <option value="Discord">Discord</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Mappings Table -->
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-left">
+                            <thead>
+                                <tr class="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                                    <th class="pb-3 px-3">Client</th>
+                                    <th class="pb-3 px-3">Platform</th>
+                                    <th class="pb-3 px-3">External Identity</th>
+                                    <th class="pb-3 px-3">Slack Channel</th>
+                                    <th class="pb-3 px-3">Status</th>
+                                    <th class="pb-3 px-3 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 text-xs">
+                                <!-- Loading placeholder: only while the first
+                                     fetch is in flight, so an empty result is
+                                     never mistaken for a slow one. -->
+                                <template x-if="isLoading && filteredDeliveryMappings.length === 0">
+                                    <tr>
+                                        <td colspan="6" class="py-4">
+                                            <div class="space-y-3">
+                                                <template x-for="n in 5" :key="n">
+                                                    <div class="flex items-center gap-4">
+                                                        <div class="skeleton h-4 flex-1" style="max-width: 22%"></div>
+                                                        <div class="skeleton h-4 w-24"></div>
+                                                        <div class="skeleton h-4 w-32"></div>
+                                                        <div class="skeleton h-4 w-16"></div>
+                                                        <div class="skeleton h-5 w-20 rounded-full"></div>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </template>
+                                <template x-for="(item, index) in filteredDeliveryMappings" :key="item.row_idx">
+                                    <tr class="row-hover stagger-item" :style="'--i:' + Math.min(index || 0, 12)">
+                                        <td class="py-3.5 px-3">
+                                            <div class="font-bold text-slate-900" x-text="item.client_name"></div>
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <span class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider"
+                                                :class="platformBadgeClass(item.platform)">
+                                                <i :class="platformIconClass(item.platform)"></i>
+                                                <span x-text="item.platform || 'WhatsApp'"></span>
+                                            </span>
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <span class="font-mono text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md text-[11px]" x-text="item.external_id"></span>
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <span class="font-mono text-link font-semibold" x-text="item.slack_channel_id"></span>
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <button 
+                                                @click="togglePause(item)"
+                                                class="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-[11px] font-bold transition shadow-sm"
+                                                :class="item.paused ? 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200' : 'bg-emerald-500 text-white border border-emerald-600 hover:bg-emerald-600'">
+                                                <span class="h-1.5 w-1.5 rounded-full" :class="item.paused ? 'bg-amber-500' : 'bg-white'"></span>
+                                                <span x-text="item.paused ? 'Paused' : 'Active'"></span>
+                                            </button>
+                                        </td>
+                                        <td class="py-3.5 px-3 text-right space-x-1">
+                                            <button @click="openEditModal(item)" class="p-1.5 text-slate-400 hover:text-primary hover:bg-selbg rounded-lg icon-btn" title="Edit">
+                                                <i class="fa-regular fa-pen-to-square text-sm"></i>
+                                            </button>
+                                            <button @click="confirmDelete(item)" class="p-1.5 text-slate-400 hover:text-danger hover:bg-rose-50 rounded-lg icon-btn" title="Delete">
+                                                <i class="fa-regular fa-trash-can text-sm"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- ----------------------------------------------------------- -->
+                <!-- VIEW 2: SALES CRM LEADS -->
+                <!-- ----------------------------------------------------------- -->
+                <div x-show="activeTag === 'sales' && currentView === 'leads'" class="" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
+                    
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                        <div>
+                            <h2 class="text-lg font-bold text-slate-900 tracking-tight">Sales CRM Pipeline</h2>
+                            <p class="text-xs text-slate-500 mt-0.5">Real-time auto-intake leads, stage management, and closing pipeline.</p>
+                        </div>
+
+                        <!-- Filters & Actions -->
+                        <div class="flex items-center space-x-2.5">
+                            <button 
+                                @click="openInsightsModal()"
+                                class="inline-flex items-center space-x-1.5 px-4 py-1.5 rounded-full text-xs font-bold badge-emerald hover:bg-primary hover:text-white transition shadow-sm active:scale-95">
+                                <i class="fa-solid fa-brain text-xs"></i>
+                                <span>AI Win/Loss Insights</span>
+                            </button>
+
+                            <input 
+                                type="text" 
+                                x-model="salesSearch" 
+                                placeholder="Search leads..." 
+                                class="w-48 pl-3 pr-3 py-1.5 bg-searchbg border border-inputline rounded-full text-xs text-ink placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all">
+
+                            <select x-model="salesStageFilter" class="bg-searchbg border border-inputline rounded-full px-3 py-1.5 text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-primary">
+                                <option value="ALL">All Stages</option>
+                                <option value="new">New</option>
+                                <option value="contacted">Contacted</option>
+                                <option value="qualified">Qualified</option>
+                                <option value="proposal">Proposal</option>
+                                <option value="negotiation">Negotiation</option>
+                                <option value="won">Won</option>
+                                <option value="lost">Lost</option>
+                            </select>
+
+                            <select x-model="salesScoreFilter" class="bg-slate-100/80 border border-slate-200 rounded-full px-3 py-1.5 text-xs font-semibold text-slate-700 focus:outline-none">
+                                <option value="ALL">All Scores</option>
+                                <option value="hot">Hot</option>
+                                <option value="warm">Warm</option>
+                                <option value="cold">Cold</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- CRM Table -->
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-left">
+                            <thead>
+                                <tr class="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                                    <th class="pb-3 px-3">Lead Name</th>
+                                    <th class="pb-3 px-3">Channel / JID</th>
+                                    <th class="pb-3 px-3">Geo / Lang</th>
+                                    <th class="pb-3 px-3">Stage</th>
+                                    <th class="pb-3 px-3">Lead Score</th>
+                                    <th class="pb-3 px-3">Deal Value</th>
+                                    <th class="pb-3 px-3">Status</th>
+                                    <th class="pb-3 px-3">Assigned Owner</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 text-xs">
+                                <template x-for="(lead, index) in filteredSalesLeads" :key="lead.row_idx">
+<tr class="row-hover stagger-item" :style="'--i:' + Math.min(index || 0, 12)">
+                                        <td class="py-3.5 px-3">
+                                            <div class="font-bold text-slate-900" x-text="lead.client_name"></div>
+                                            <div class="text-[10px] text-slate-400 font-mono" x-text="lead.created_at || 'Auto-intake'"></div>
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <div class="font-mono text-link font-semibold" x-text="lead.slack_channel_id"></div>
+                                            <div class="font-mono text-[10px] text-slate-500" x-text="lead.external_id"></div>
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <div class="font-bold text-slate-700 text-xs flex items-center gap-1">
+                                                <i class="fa-solid fa-earth-americas text-slate-400"></i>
+                                                <span x-text="lead.geo || 'Unknown'"></span>
+                                            </div>
+                                            <div class="font-mono text-[10px] text-slate-400 mt-0.5 flex items-center gap-1">
+                                                <i class="fa-solid fa-language"></i>
+                                                <span x-text="lead.language || 'Unknown'"></span>
+                                            </div>
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <select 
+                                                x-model="lead.stage" 
+                                                @change="updateLeadStage(lead)"
+                                                class="text-xs font-bold rounded-full px-3 py-1 border cursor-pointer focus:outline-none transition"
+                                                :class="{
+                                                    'bg-slate-100 border-slate-200 text-slate-700': lead.stage === 'new',
+                                                    'bg-sky-100 border-sky-200 text-sky-800': lead.stage === 'contacted',
+                                                    'bg-blue-100 border-blue-200 text-blue-800': lead.stage === 'qualified',
+                                                    'bg-indigo-100 border-indigo-200 text-indigo-800': lead.stage === 'proposal',
+                                                    'bg-violet-100 border-violet-200 text-violet-800': lead.stage === 'negotiation',
+                                                    'bg-okbg border-emerald-200 text-oktext font-extrabold': lead.stage === 'won',
+                                                    'bg-rose-100 border-rose-200 text-rose-800': lead.stage === 'lost'
+                                                }">
+                                                <option value="new">New</option>
+                                                <option value="contacted">Contacted</option>
+                                                <option value="qualified">Qualified</option>
+                                                <option value="proposal">Proposal</option>
+                                                <option value="negotiation">Negotiation</option>
+                                                <option value="won">Won</option>
+                                                <option value="lost">Lost</option>
+                                            </select>
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <select 
+                                                x-model="lead.lead_score" 
+                                                @change="updateLeadScore(lead)"
+                                                class="text-xs font-bold rounded-full px-3 py-1 border cursor-pointer focus:outline-none"
+                                                :class="{
+                                                    'bg-amber-100 border-amber-300 text-amber-900': lead.lead_score === 'hot',
+                                                    'bg-yellow-100 border-yellow-300 text-yellow-800': lead.lead_score === 'warm',
+                                                    'bg-slate-100 border-slate-200 text-slate-700': lead.lead_score === 'cold'
+                                                }">
+                                                <option value="hot">Hot</option>
+                                                <option value="warm">Warm</option>
+                                                <option value="cold">Cold</option>
+                                            </select>
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <input 
+                                                type="text" 
+                                                x-model="lead.deal_value" 
+                                                @blur="updateLeadValue(lead)"
+                                                placeholder="$0.00" 
+                                                class="w-24 bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-900">
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <button 
+                                                @click="toggleLeadPause(lead)"
+                                                class="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-[11px] font-bold transition shadow-sm"
+                                                :class="lead.paused ? 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-emerald-200'">
+                                                <span class="h-1.5 w-1.5 rounded-full" :class="lead.paused ? 'bg-amber-500' : 'bg-emerald-500'"></span>
+                                                <span x-text="lead.paused ? 'Paused' : 'Active'"></span>
+                                            </button>
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <select 
+                                                x-model="lead.owner_slack_id" 
+                                                @change="updateLeadOwner(lead)"
+                                                class="bg-slate-100 border border-slate-200 text-xs font-semibold rounded-full px-3 py-1 text-slate-700 cursor-pointer focus:outline-none">
+                                                <option value="">Unassigned</option>
+                                                <template x-for="rep in salesPool" :key="rep.slack_user_id">
+                                                    <option :value="rep.slack_user_id" x-text="rep.name"></option>
+                                                </template>
+                                            </select>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- ----------------------------------------------------------- -->
+                <!-- VIEW: SALES CONTACTS DIRECTORY -->
+                <!-- ----------------------------------------------------------- -->
+                <div x-show="currentView === 'contacts'" x-transition class="space-y-6">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div>
+                            <h2 class="text-xl font-extrabold text-slate-900 tracking-tight">Sales Contacts Directory</h2>
+                            <p class="text-xs text-slate-500 mt-1">Directory of all client names and external WhatsApp / Telegram identifiers.</p>
+                        </div>
+
+                        <!-- Search Bar -->
+                        <div class="flex items-center space-x-3">
+                            <div class="relative w-72">
+                                <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                                <input 
+                                    type="text" 
+                                    x-model="contactSearch" 
+                                    placeholder="Search by name or number..." 
+                                    class="w-full pl-9 pr-4 py-2 rounded-full border border-inputline text-xs text-ink bg-searchbg focus:bg-white focus:outline-none focus:ring-1 focus:ring-primary shadow-sm transition">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Contacts Table -->
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-left">
+                            <thead>
+                                <tr class="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                                    <th class="pb-3 px-3">Contact Name</th>
+                                    <th class="pb-3 px-3">Platform</th>
+                                    <th class="pb-3 px-3">External Identifier</th>
+                                    <th class="pb-3 px-3">Slack Lead Channel</th>
+                                    <th class="pb-3 px-3">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 text-xs">
+                                <template x-for="(contact, index) in filteredContacts" :key="contact.external_id">
+<tr class="row-hover stagger-item" :style="'--i:' + Math.min(index || 0, 12)">
+                                        <td class="py-3.5 px-3">
+                                            <div class="flex items-center space-x-3">
+                                                <div class="h-8 w-8 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-xs uppercase" x-text="(contact.client_name || 'C').charAt(0)">
+                                                    C
+                                                </div>
+                                                <div>
+                                                    <div class="font-bold text-slate-900" x-text="contact.client_name"></div>
+                                                    <div class="text-[10px] text-slate-400 font-mono" x-text="contact.created_at || 'Inbound Lead'"></div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <span class="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider"
+                                                :class="contact.platform === 'telegram' ? 'bg-sky-100 text-sky-800' : 'bg-emerald-100 text-emerald-800'">
+                                                <i :class="contact.platform === 'telegram' ? 'fa-brands fa-telegram' : 'fa-brands fa-whatsapp'"></i>
+                                                <span x-text="contact.platform || 'WhatsApp'"></span>
+                                            </span>
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <div class="flex items-center space-x-2">
+                                                <span class="font-mono font-bold text-slate-800" x-text="contact.external_id"></span>
+                                                <button 
+                                                    @click="navigator.clipboard.writeText(contact.external_id); showToast('Copied external ID to clipboard!')"
+                                                    class="text-slate-400 hover:text-primary hover:bg-selbg rounded-lg icon-btn p-1"
+                                                    title="Copy External ID">
+                                                    <i class="fa-regular fa-copy text-xs"></i>
+                                                </button>
+                                            </div>
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <span class="font-mono text-xs text-link bg-slate-100 px-2.5 py-1 rounded-full" x-text="contact.slack_channel_id || '-'"></span>
+                                        </td>
+                                        <td class="py-3.5 px-3">
+                                            <button 
+                                                @click="activeTag = 'sales'; currentView = 'leads'; salesSearch = contact.external_id"
+                                                class="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-900 hover:text-white transition">
+                                                <span>View in CRM</span>
+                                                <i class="fa-solid fa-arrow-right text-[9px]"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </template>
+                                <tr x-show="filteredContacts.length === 0">
+                                    <td colspan="5" class="py-8 text-center text-slate-400 text-xs">
+                                        No sales contacts found matching your search.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- ----------------------------------------------------------- -->
+                <!-- VIEW 3: SALES MEMBER POOL -->
+                <!-- ----------------------------------------------------------- -->
+                <div x-show="activeTag === 'sales' && currentView === 'pool'" class="" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
+                    <!-- LEADERBOARD WIDGET -->
+                    <div class="mb-8 bg-gateway-soft rounded-3xl p-6 shadow-raised relative overflow-hidden" x-show="leaderboard.length > 0">
+                        <div class="absolute -right-10 -top-10 text-magenta/30 transform rotate-12 pointer-events-none">
+                            <i class="fa-solid fa-trophy text-[180px]"></i>
+                        </div>
+                        <div class="relative z-10 flex flex-col md:flex-row gap-6">
+                            <div class="md:w-1/4">
+                                <div class="inline-flex items-center space-x-2 px-3 py-1 bg-white/15 text-white rounded-full text-xs font-bold mb-3 border border-white/30">
+                                    <i class="fa-solid fa-chart-line"></i>
+                                    <span>Leaderboard</span>
+                                </div>
+                                <h3 class="text-white text-xl font-bold tracking-tight">Top Performers</h3>
+                                <p class="text-emerald-100 text-xs mt-1">Based on total closed deals.</p>
+                            </div>
+                            
+                            <div class="md:w-3/4 flex gap-4 overflow-x-auto pb-2 -mr-2 pr-2 scrollbar-hide">
+                                <template x-for="(rep, index) in leaderboard.slice(0, 3)" :key="rep.slack_user_id || index">
+                                    <div class="min-w-[160px] bg-white border rounded-2xl p-4 flex flex-col relative" :class="index === 0 ? 'border-gatewayaccent bg-okbg' : 'border-line'">
+                                        <div x-show="index === 0" class="absolute top-2 right-2 h-8 w-8 bg-gradient-to-br from-yellow-300 to-amber-500 rounded-full flex items-center justify-center text-white shadow-lg border-2 border-white">
+                                            <i class="fa-solid fa-crown text-[10px]"></i>
+                                        </div>
+                                        <div x-show="index === 1" class="absolute top-3 right-3 h-6 w-6 bg-gradient-to-br from-slate-300 to-slate-400 rounded-full flex items-center justify-center text-ink shadow-sm border border-white font-mono text-[9px] font-bold">2</div>
+                                        <div x-show="index === 2" class="absolute top-3 right-3 h-6 w-6 bg-gradient-to-br from-amber-500 to-amber-700 rounded-full flex items-center justify-center text-white shadow-sm border border-white font-mono text-[9px] font-bold">3</div>
+                                        
+                                        <span class="text-xs font-bold text-ink truncate pr-4" x-text="rep.name"></span>
+                                        <div class="mt-auto pt-3 flex items-end justify-between">
+                                            <div class="flex flex-col">
+                                                <span class="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-0.5">Wins</span>
+                                                <span class="text-2xl font-black text-ink leading-none" :class="index === 0 ? 'text-emerald-600' : ''" x-text="rep.wins || 0"></span>
+                                            </div>
+                                            <div class="h-1.5 w-1.5 rounded-full" :class="rep.active ? 'bg-emerald-500' : 'bg-slate-300'" :title="rep.active ? 'Active' : 'Inactive'"></div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between mb-6">
+                        <div>
+                            <h2 class="text-lg font-bold text-slate-900 tracking-tight">Sales Team Roster (Round-Robin Pool)</h2>
+                            <p class="text-xs text-slate-500 mt-0.5">Reps in this pool are invited to lead channels. Active reps receive round-robin owner assignment.</p>
+                        </div>
+                    </div>
+
+                    <div class="overflow-x-auto w-full pb-4">
+                        <table class="w-full table-fixed text-left">
+                            <thead>
+                                <tr class="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                                    <th class="pb-3 px-3 w-1/4">Sales Rep</th>
+                                    <th class="pb-3 px-3 w-1/4">Slack User ID</th>
+                                    <th class="pb-3 px-3 w-1/4">Rotation Status</th>
+                                    <th class="pb-3 px-3 w-1/4 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 text-xs">
+                                <template x-for="(rep, index) in salesPool" :key="rep.row_idx">
+<tr class="row-hover stagger-item" :style="'--i:' + Math.min(index || 0, 12)">
+                                        <td class="py-3.5 px-3 font-bold text-slate-900" x-text="rep.name"></td>
+                                        <td class="py-3.5 px-3 font-mono text-slate-600" x-text="rep.slack_user_id"></td>
+                                        <td class="py-3.5 px-3">
+                                            <button 
+                                                @click="toggleRepActive(rep)"
+                                                class="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-[11px] font-bold transition shadow-sm"
+                                                :class="rep.active ? 'bg-okbg text-oktext border border-emerald-200' : 'bg-slate-100 text-muted border border-slate-200'">
+                                                <span class="h-1.5 w-1.5 rounded-full" :class="rep.active ? 'bg-emerald-500' : 'bg-slate-400'"></span>
+                                                <span x-text="rep.active ? 'Active (In Rotation)' : 'Vacation / Inactive'"></span>
+                                            </button>
+                                        </td>
+                                        <td class="py-3.5 px-3 text-right">
+                                            <button @click="deleteRep(rep)" class="p-1.5 text-slate-400 hover:text-danger hover:bg-rose-50 rounded-lg icon-btn">
+                                                <i class="fa-regular fa-trash-can text-sm"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- ----------------------------------------------------------- -->
+                <!-- VIEW 4: SETTINGS & SAFETY CONTROLS -->
+                <!-- ----------------------------------------------------------- -->
+                <div x-show="activeTag === 'sales' && currentView === 'settings'" class="max-w-4xl space-y-6" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
+                    
+                    <!-- Kill-Switch Master Card -->
+                    <div class="p-6 rounded-3xl border transition"
+                        :class="settings.kill_switch_autocreate ? 'bg-rose-50 border-rose-200' : 'bg-slate-50/80 border-slate-200'">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div>
+                                <h3 class="text-base font-bold text-slate-900">Emergency Stop (All Traffic)</h3>
+                                <p class="text-xs text-slate-500 mt-1">Halts the entire bridge: clients cannot reach you and nothing can be sent to them. Toggling off resumes service.</p>
+                                <p class="text-xs font-mono mt-1" x-show="bridgeEmergency"
+                                   :class="bridgeEmergency.active ? 'text-rose-600' : 'text-emerald-600'"
+                                   x-text="bridgeEmergency.active
+                                     ? 'STOPPED since ' + bridgeEmergency.since
+                                     : 'Running'"></p>
+                            </div>
+                            <button 
+                                @click="toggleKillSwitch()"
+                                class="px-5 py-2 rounded-full text-xs font-bold transition shadow-sm w-full sm:w-auto flex-shrink-0"
+                                :class="settings.kill_switch_autocreate ? 'bg-rose-500 text-white' : 'bg-slate-200 text-ink hover:bg-slate-300'">
+                                <span x-text="settings.kill_switch_autocreate ? 'HALTED / ON' : 'NORMAL / OFF'"></span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Triage Mode Card -->
+                    <div class="p-6 rounded-3xl bg-slate-50/80 border border-slate-200">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div>
+                                <h3 class="text-base font-bold text-slate-900">Manual Triage Mode</h3>
+                                <p class="text-xs text-slate-500 mt-1">Routes unmapped inbound leads to a human review inbox before creating a dedicated channel.</p>
+                            </div>
+                            <button 
+                                @click="toggleTriageMode()"
+                                class="px-5 py-2 rounded-full text-xs font-bold transition shadow-sm w-full sm:w-auto flex-shrink-0"
+                                :class="settings.triage_mode_enabled ? 'bg-primary text-white' : 'bg-slate-200 text-ink hover:bg-slate-300'">
+                                <span x-text="settings.triage_mode_enabled ? 'ENABLED' : 'DISABLED'"></span>
+                            </button>
+                        </div>
+                        <div class="mt-4 pt-4 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <label class="text-xs font-bold text-slate-700">Triage Channel ID</label>
+                            <input 
+                                type="text" 
+                                x-model="settings.triage_channel_id" 
+                                @blur="saveSettings('triage_channel_id')"
+                                placeholder="C0BR8M86ZPB" 
+                                class="w-full sm:w-48 bg-white border border-slate-200 rounded-full px-3 py-1 text-xs font-mono text-slate-800 focus:outline-none">
+                        </div>
+                    </div>
+
+                    <!-- SLA & Archive Settings -->
+                    <div class="p-6 rounded-3xl bg-slate-50/80 border border-slate-200">
+                        <h3 class="text-base font-bold text-slate-900">SLA Warning & Auto-Archive Timers</h3>
+                        <p class="text-xs text-slate-500 mt-1">Configure automated silence warnings and channel cleanup thresholds.</p>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-200">
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">SLA Response Warning (Minutes)</label>
+                                <input 
+                                    type="number" 
+                                    x-model="settings.sla_minutes" 
+                                    @blur="saveSettings('sla_minutes')"
+                                    class="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-mono font-bold text-slate-800 focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Auto-Archive Deals (Days)</label>
+                                <input 
+                                    type="number" 
+                                    x-model="settings.archive_after_days" 
+                                    @blur="saveSettings('archive_after_days')"
+                                    class="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-mono font-bold text-slate-800 focus:outline-none">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sunday Auto-Reply Rule -->
+                    <div class="p-6 rounded-3xl bg-slate-50/80 border border-slate-200">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-base font-bold text-slate-900">Sunday-Only Auto-Reply</h3>
+                                <p class="text-xs text-slate-500 mt-1">Send an automated out-of-office message to clients messaging on Sunday.</p>
+                            </div>
+                            <button 
+                                @click="settings.sunday_autoreply_enabled = !settings.sunday_autoreply_enabled; saveSettings('sunday_autoreply_enabled')"
+                                class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                                :class="settings.sunday_autoreply_enabled ? 'bg-primary' : 'bg-slate-300'">
+                                <span 
+                                    class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                                    :class="settings.sunday_autoreply_enabled ? 'translate-x-5' : 'translate-x-0'"></span>
+                            </button>
+                        </div>
+
+                        <div class="mt-4 pt-4 border-t border-slate-200">
+                            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Acknowledgment Message</label>
+                            <textarea 
+                                rows="3"
+                                x-model="settings.sunday_autoreply_text" 
+                                @blur="saveSettings('sunday_autoreply_text')"
+                                placeholder="Thank you for reaching out! Our team is away for Sunday..."
+                                class="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none resize-none"></textarea>
+                        </div>
+                    </div>
+
+                    <!-- Daily Sales Digest Settings -->
+                    <div class="p-6 rounded-3xl bg-slate-50/80 border border-slate-200">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-base font-bold text-slate-900">Daily Sales Pipeline Digest</h3>
+                                <p class="text-xs text-slate-500 mt-1">Automated executive summary of leads, revenue, and rep activity.</p>
+                            </div>
+                            <div class="flex items-center space-x-3">
+                                <button 
+                                    @click="triggerDigest()"
+                                    :disabled="triggeringDigest"
+                                    class="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 transition shadow-sm disabled:opacity-50">
+                                    <i class="fa-solid fa-paper-plane text-[10px]" :class="triggeringDigest ? 'animate-spin' : ''"></i>
+                                    <span x-text="triggeringDigest ? 'Posting...' : 'Post Digest Now'"></span>
+                                </button>
+                                <button 
+                                    @click="settings.digest_enabled = !settings.digest_enabled; saveSettings('digest_enabled')"
+                                    class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                                    :class="settings.digest_enabled ? 'bg-primary' : 'bg-slate-300'">
+                                    <span 
+                                        class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                                        :class="settings.digest_enabled ? 'translate-x-5' : 'translate-x-0'"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-200">
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Digest Slack Channel ID</label>
+                                <input 
+                                    type="text" 
+                                    x-model="settings.digest_channel_id" 
+                                    @blur="saveSettings('digest_channel_id')"
+                                    placeholder="e.g. C08BHSDRDJH"
+                                    class="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-mono text-slate-800 focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Scheduled Time (Daily)</label>
+                                <input 
+                                    type="time" 
+                                    x-model="settings.digest_time" 
+                                    @blur="saveSettings('digest_time')"
+                                    class="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-mono font-bold text-slate-800 focus:outline-none">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ----------------------------------------------------------- -->
+                <!-- VIEW 5: UNIVERSAL BLOCKLIST -->
+                <!-- ----------------------------------------------------------- -->
+                <div x-show="activeTag === 'sales' && currentView === 'blocklist'" class="max-w-4xl" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
+                    <div class="flex items-center justify-between mb-6">
+                        <div>
+                            <h2 class="text-lg font-bold text-slate-900 tracking-tight">Universal Blocklist</h2>
+                            <p class="text-xs text-slate-500 mt-0.5">Blocked numbers are dropped permanently across all bridges with zero noise.</p>
+                        </div>
+                    </div>
+
+                    <div class="overflow-x-auto w-full pb-4">
+                        <table class="min-w-full text-left">
+                            <thead>
+                                <tr class="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                                    <th class="pb-3 px-3">Blocked Phone / JID</th>
+                                    <th class="pb-3 px-3">Reason</th>
+                                    <th class="pb-3 px-3">Date Added</th>
+                                    <th class="pb-3 px-3 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 text-xs">
+                                <template x-for="(item, index) in blocklist" :key="item.row_idx">
+<tr class="row-hover stagger-item" :style="'--i:' + Math.min(index || 0, 12)">
+                                        <td class="py-3.5 px-3 font-mono font-bold text-rose-700" x-text="item.external_id"></td>
+                                        <td class="py-3.5 px-3 text-slate-600" x-text="item.reason || 'Spam'"></td>
+                                        <td class="py-3.5 px-3 font-mono text-slate-400 text-[11px]" x-text="item.added_at"></td>
+                                        <td class="py-3.5 px-3 text-right">
+                                            <button @click="deleteBlocklistEntry(item)" class="px-3 py-1 rounded-full text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition">
+                                                Unblock
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- ----------------------------------------------------------- -->
+                <!-- VIEW 6: SALES SNIPPETS -->
+                <!-- ----------------------------------------------------------- -->
+                <div x-show="activeTag === 'sales' && currentView === 'snippets'" class="space-y-6" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div>
+                            <h2 class="text-lg font-bold text-slate-900 tracking-tight">Sales Quick Snippets</h2>
+                            <p class="text-xs text-slate-500 mt-0.5">Pre-approved response templates for sales reps across WhatsApp and Telegram.</p>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <template x-for="snippet in snippets" :key="snippet.row_idx">
+                            <div class="bg-slate-50/80 rounded-2xl p-5 border border-slate-200/80 flex flex-col justify-between hover:shadow-md transition">
+                                <div>
+                                    <div class="flex items-center justify-between mb-2">
+                                        <h3 class="text-sm font-bold text-slate-900" x-text="snippet.title"></h3>
+                                        <div class="flex items-center space-x-1">
+                                            <button @click="openEditSnippetModal(snippet)" class="p-1 text-slate-400 hover:text-slate-900 transition" title="Edit">
+                                                <i class="fa-regular fa-pen-to-square text-xs"></i>
+                                            </button>
+                                            <button @click="deleteSnippet(snippet)" class="p-1 text-slate-400 hover:text-rose-600 transition" title="Delete">
+                                                <i class="fa-regular fa-trash-can text-xs"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <p class="text-xs text-slate-600 whitespace-pre-line bg-white p-3 rounded-xl border border-slate-100 font-mono" x-text="snippet.content"></p>
+                                </div>
+                                <div class="mt-4 pt-3 border-t border-slate-200/60 flex items-center justify-between">
+                                    <span class="text-[10px] font-mono text-slate-400" x-text="'ID: ' + snippet.row_idx"></span>
+                                    <button 
+                                        @click="navigator.clipboard.writeText(snippet.content); showToast('Copied snippet to clipboard!')"
+                                        class="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition">
+                                        <i class="fa-regular fa-copy text-[10px]"></i>
+                                        <span>Copy</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                        <div x-show="snippets.length === 0" class="col-span-full py-12 text-center text-slate-400 text-xs">
+                            No sales snippets created yet. Click "Add Snippet" to create one.
+                    </div>
+                </div>
+            </div>
+                <!-- =============================================================== -->
+                <!-- VIEW 7: DEDICATED LEADERBOARD PAGE -->
+                <!-- =============================================================== -->
+                <div x-show="currentView === 'leaderboard'" class="space-y-8" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
+
+                    <!-- Header -->
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h2 class="text-xl font-bold text-slate-900 tracking-tight">Sales Leaderboard</h2>
+                            <p class="text-xs text-slate-500 mt-0.5">Performance rankings based on closed deals across all platforms.</p>
+                        </div>
+                        <button @click="fetchLeaderboard()" class="inline-flex items-center space-x-2 px-4 py-2 rounded-full text-xs font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 shadow-sm transition active:scale-95">
+                            <i class="fa-solid fa-arrows-rotate text-xs"></i>
+                            <span>Refresh</span>
+                        </button>
+                    </div>
+
+                    <!-- Top 3 Podium Cards -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-5" x-show="leaderboard.length > 0">
+                        <template x-for="(rep, index) in leaderboard.slice(0, 3)" :key="rep.slack_user_id || index">
+                            <div class="rounded-2xl p-6 flex flex-col relative border shadow-lg transition-all duration-300 hover:scale-[1.02]"
+                                :class="index === 0 
+                                    ? 'bg-gradient-to-br from-gateway to-ink border-emerald-300' 
+                                    : 'bg-white border-slate-200'">
+                                
+                                <!-- Rank Badge -->
+                                <div class="absolute top-4 right-4 h-10 w-10 rounded-full flex items-center justify-center text-white shadow-lg font-bold text-sm"
+                                    :class="index === 0 
+                                        ? 'bg-gradient-to-br from-yellow-300 to-amber-500 border-2 border-white' 
+                                        : index === 1 
+                                            ? 'bg-gradient-to-br from-slate-300 to-slate-500 border-2 border-white' 
+                                            : 'bg-gradient-to-br from-amber-600 to-amber-800 border-2 border-white'">
+                                    <i x-show="index === 0" class="fa-solid fa-crown text-xs"></i>
+                                    <span x-show="index === 1">2</span>
+                                    <span x-show="index === 2">3</span>
+                                </div>
+
+                                <!-- Rep Info -->
+                                <div class="mb-4">
+                                    <div class="h-12 w-12 rounded-full flex items-center justify-center font-bold text-sm uppercase mb-3"
+                                        :class="index === 0 
+                                            ? 'bg-okbg text-oktext ring-2 ring-emerald-300' 
+                                            : 'bg-slate-100 text-slate-600 ring-2 ring-slate-200'"
+                                        x-text="(rep.name || 'U').substring(0, 2)">
+                                    </div>
+                                    <h3 class="text-lg font-bold truncate pr-12" :class="index === 0 ? 'text-white' : 'text-slate-900'" x-text="rep.name"></h3>
+                                    <p class="text-xs mt-0.5" :class="index === 0 ? 'text-slate-400' : 'text-slate-500'" x-text="'Slack ID: ' + (rep.slack_user_id || 'N/A')"></p>
+                                </div>
+
+                                <!-- Stats -->
+                                <div class="mt-auto pt-4 border-t flex items-center justify-between"
+                                    :class="index === 0 ? 'border-white/10' : 'border-slate-100'">
+                                    <div class="flex flex-col">
+                                        <span class="text-[10px] uppercase font-bold tracking-wider mb-1" :class="index === 0 ? 'text-slate-500' : 'text-slate-400'">Total Wins</span>
+                                        <span class="text-3xl font-black leading-none" :class="index === 0 ? 'text-emerald-400' : 'text-slate-900'" x-text="rep.wins || 0"></span>
+                                    </div>
+                                    <div class="flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold"
+                                        :class="rep.active 
+                                            ? (index === 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-50 text-emerald-600 border border-emerald-200') 
+                                            : (index === 0 ? 'bg-white/10 text-slate-400' : 'bg-slate-100 text-slate-500')">
+                                        <div class="h-1.5 w-1.5 rounded-full" :class="rep.active ? 'bg-emerald-500' : 'bg-slate-400'"></div>
+                                        <span x-text="rep.active ? 'Active' : 'Inactive'"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+
+                    <!-- Full Rankings Table -->
+                    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden hover:shadow-lg transition-shadow duration-300" x-show="leaderboard.length > 0">
+                        <div class="px-6 py-4 border-b border-slate-100">
+                            <h3 class="text-sm font-bold text-slate-800">Complete Rankings</h3>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full table-fixed text-left">
+                                <thead>
+                                    <tr class="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                                        <th class="py-3 px-6 w-16">Rank</th>
+                                        <th class="py-3 px-6 w-1/3">Sales Rep</th>
+                                        <th class="py-3 px-6 w-1/4">Slack User ID</th>
+                                        <th class="py-3 px-6 w-1/6 text-center">Wins</th>
+                                        <th class="py-3 px-6 w-1/6 text-center">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-50 text-sm">
+                                    <template x-for="(rep, index) in leaderboard" :key="rep.slack_user_id || index">
+                                        <tr class="row-hover stagger-item" :style="'--i:' + Math.min(index || 0, 12)">
+                                            <td class="py-4 px-6">
+                                                <span class="inline-flex items-center justify-center h-7 w-7 rounded-full text-xs font-bold"
+                                                    :class="index === 0 
+                                                        ? 'bg-gradient-to-br from-yellow-400 to-amber-600 text-white' 
+                                                        : index === 1 
+                                                            ? 'bg-gradient-to-br from-slate-300 to-slate-500 text-white' 
+                                                            : index === 2 
+                                                                ? 'bg-gradient-to-br from-amber-600 to-amber-800 text-white' 
+                                                                : 'bg-slate-100 text-slate-600'"
+                                                    x-text="index + 1">
+                                                </span>
+                                            </td>
+                                            <td class="py-4 px-6 font-semibold text-slate-800" x-text="rep.name"></td>
+                                            <td class="py-4 px-6 text-xs text-slate-500 font-mono" x-text="rep.slack_user_id"></td>
+                                            <td class="py-4 px-6 text-center">
+                                                <span class="text-lg font-black" :class="index === 0 ? 'text-emerald-600' : 'text-slate-800'" x-text="rep.wins || 0"></span>
+                                            </td>
+                                            <td class="py-4 px-6 text-center">
+                                                <span class="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold"
+                                                    :class="rep.active ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-slate-100 text-slate-500'">
+                                                    <span class="h-1.5 w-1.5 rounded-full" :class="rep.active ? 'bg-emerald-500' : 'bg-slate-400'"></span>
+                                                    <span x-text="rep.active ? 'Active' : 'Inactive'"></span>
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Empty State -->
+                    <div x-show="leaderboard.length === 0" class="py-20 text-center">
+                        <i class="fa-solid fa-trophy text-5xl text-slate-200 mb-4"></i>
+                        <p class="text-slate-400 text-sm">No leaderboard data available yet.</p>
+                    </div>
+                </div>
+
+            </div>
+
+            </div><!-- /content well -->
+
+        </div>
+
+    </div>
+
+    <!-- ======================================================================= -->
+    <!-- MODALS & DIALOGS -->
+    <!-- ======================================================================= -->
+
+    
+    <!-- HANDOFF TABLE MODAL (Step 1) -->
+    <div x-show="isHandoffTableModalOpen" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen p-4">
+            <div @click="isHandoffTableModalOpen = false" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm overlay-in"></div>
+            <div class="dialog-in bg-white rounded-3xl p-6 w-full max-w-5xl shadow-overlay border border-slate-200 relative z-10">
+                <div class="flex justify-between items-center mb-6">
+                    <div>
+                        <h3 class="text-xl font-bold text-slate-900">Select Client for Delivery Handoff</h3>
+                        <p class="text-sm text-slate-500 mt-1">Showing all clients from Sales CRM marked as 'Closed Won'.</p>
+                    </div>
+                    <button @click="isHandoffTableModalOpen = false" class="text-slate-400 hover:text-slate-600">
+                        <i class="fa-solid fa-xmark text-xl"></i>
+                    </button>
+                </div>
+                
+                <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                    <table class="w-full text-left text-xs text-slate-600">
+                        <thead class="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-extrabold text-slate-500 tracking-wider">
+                            <tr>
+                                <th class="p-4">Client Name</th>
+                                <th class="p-4">Platform / JID</th>
+                                <th class="p-4">Deal Value</th>
+                                <th class="p-4">Assigned Sales Owner</th>
+                                <th class="p-4 text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            <template x-for="(lead, index) in salesLeads.filter(l => l.stage === 'won' && !l.paused)" :key="lead.row_idx">
+                                <tr class="row-hover stagger-item" :style="'--i:' + Math.min(index || 0, 12)">
+                                    <td class="p-4 font-bold text-slate-800" x-text="lead.client_name"></td>
+                                    <td class="p-4">
+                                        <div class="flex flex-col">
+                                            <span class="font-semibold text-slate-700 uppercase text-[10px]" x-text="lead.platform"></span>
+                                            <span class="text-slate-400 font-mono text-[10px]" x-text="lead.external_id"></span>
+                                        </div>
+                                    </td>
+                                    <td class="p-4 font-bold text-emerald-600" x-text="'$' + (lead.deal_value || '0')"></td>
+                                    <td class="p-4" x-text="lead.owner_slack_id || 'Unassigned'"></td>
+                                    <td class="p-4 text-right">
+                                        <button @click="startHandoff(lead)" class="px-4 py-2 bg-primary text-white text-[10px] font-bold rounded-full hover:bg-emerald-700 hover:shadow-md hover:-translate-y-0.5 transition-all shadow-sm">
+                                            Handover to Delivery
+                                        </button>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr x-show="salesLeads.filter(l => l.stage === 'won' && !l.paused).length === 0">
+                                <td colspan="5" class="p-8 text-center text-slate-400 italic">No won clients available for handoff.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ADD / EDIT DELIVERY CLIENT MODAL -->
+    <div x-show="isAddModalOpen" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen p-4">
+            <div @click="isAddModalOpen = false" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm overlay-in"></div>
+            <div class="dialog-in bg-white rounded-3xl p-6 w-full max-w-md shadow-overlay border border-slate-200 relative z-10">
+                <h3 class="text-lg font-bold text-slate-900" x-text="editMode ? 'Edit Delivery Channel' : 'Complete Delivery Handoff'"></h3>
+                <p x-show="!editMode" class="text-xs text-slate-500 mt-1 mb-2">Review client details and provide the new Slack Channel ID to finalize routing.</p>
+                <form @submit.prevent="submitDeliveryForm()" class="mt-4 space-y-3.5">
+                    
+
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Platform</label>
+                        <select x-model="formData.platform" readonly class="w-full bg-slate-200/60 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 pointer-events-none">
+                            <option value="WhatsApp">WhatsApp</option>
+                            <option value="Telegram">Telegram</option>
+                            <option value="Discord">Discord</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Client Name</label>
+                        <input type="text" x-model="formData.client_name" required readonly placeholder="Auto-filled..." class="w-full bg-slate-200/60 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 cursor-not-allowed">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">External ID (Phone / JID)</label>
+                        <input type="text" x-model="formData.external_id" required readonly placeholder="Auto-filled..." class="w-full bg-slate-200/60 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-500 cursor-not-allowed">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">New Delivery Channel Name</label>
+                        <input type="text" x-model="formData.slack_channel_name" placeholder="e.g. del-client-name" class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono">
+                        <p class="text-[10px] text-slate-400 mt-1">Provide a name to auto-create the channel.</p>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Existing Slack Channel ID</label>
+                        <input type="text" x-model="formData.slack_channel_id" placeholder="Leave empty to auto-provision..." class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono">
+                        <p class="text-[10px] text-slate-400 mt-1">Or enter an existing ID to link without creating.</p>
+                    </div>
+                    <div class="pt-3 flex justify-end space-x-2">
+                        <button type="button" @click="isAddModalOpen = false" class="px-4 py-2 rounded-full text-xs font-bold text-slate-600 hover:bg-slate-100">Cancel</button>
+                        <button type="submit" class="px-5 py-2 rounded-full text-xs font-bold text-white btn-emerald shadow-md" x-text="editMode ? 'Update' : 'Save'"></button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ADD SALES REP MODAL -->
+    <div x-show="isAddRepModalOpen" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen p-4">
+            <div @click="isAddRepModalOpen = false" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm overlay-in"></div>
+            <div class="dialog-in bg-white rounded-3xl p-6 w-full max-w-md shadow-overlay border border-slate-200 relative z-10">
+                <h3 class="text-lg font-bold text-slate-900">Add Sales Rep</h3>
+                <form @submit.prevent="submitAddRepForm()" class="mt-4 space-y-3.5">
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Name</label>
+                        <input type="text" x-model="repFormData.name" required placeholder="Sarah Jenkins" class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-primary">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Slack User ID</label>
+                        <input type="text" x-model="repFormData.slack_user_id" required placeholder="U0BHSDRDJHY" class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary">
+                    </div>
+                    <div class="pt-3 flex justify-end space-x-2">
+                        <button type="button" @click="isAddRepModalOpen = false" class="px-4 py-2 rounded-full text-xs font-bold text-slate-600 hover:bg-slate-100">Cancel</button>
+                        <button type="submit" class="px-5 py-2 rounded-full text-xs font-bold text-white btn-emerald shadow-md">Add Rep</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- BLOCKLIST MODAL -->
+    <div x-show="isBlocklistModalOpen" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen p-4">
+            <div @click="isBlocklistModalOpen = false" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm overlay-in"></div>
+            <div class="dialog-in bg-white rounded-3xl p-6 w-full max-w-md shadow-overlay border border-slate-200 relative z-10">
+                <h3 class="text-lg font-bold text-slate-900">Block Phone Number / JID</h3>
+                <form @submit.prevent="submitBlocklistForm()" class="mt-4 space-y-3.5">
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Phone or JID</label>
+                        <input type="text" x-model="blockFormData.external_id" required placeholder="193260643467342@lid" class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Reason</label>
+                        <input type="text" x-model="blockFormData.reason" required placeholder="Spam Calls" class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold">
+                    </div>
+                    <div class="pt-3 flex justify-end space-x-2">
+                        <button type="button" @click="isBlocklistModalOpen = false" class="px-4 py-2 rounded-full text-xs font-bold text-slate-600 hover:bg-slate-100">Cancel</button>
+                        <button type="submit" class="px-5 py-2 rounded-full text-xs font-bold text-white bg-rose-600 hover:bg-rose-700">Block</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ADD / EDIT SNIPPET MODAL -->
+    <div x-show="isSnippetModalOpen" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen p-4">
+            <div @click="isSnippetModalOpen = false" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm overlay-in"></div>
+            <div class="dialog-in bg-white rounded-3xl p-6 w-full max-w-md shadow-overlay border border-slate-200 relative z-10">
+                <h3 class="text-lg font-bold text-slate-900" x-text="snippetEditMode ? 'Edit Sales Snippet' : 'Add Sales Snippet'"></h3>
+                <form @submit.prevent="submitSnippetForm()" class="mt-4 space-y-3.5">
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Title</label>
+                        <input type="text" x-model="snippetFormData.title" required placeholder="Pricing Overview" class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-primary">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Snippet Content</label>
+                        <textarea rows="4" x-model="snippetFormData.content" required placeholder="Our pricing plans start at..." class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary resize-none"></textarea>
+                    </div>
+                    <div class="pt-3 flex justify-end space-x-2">
+                        <button type="button" @click="isSnippetModalOpen = false" class="px-4 py-2 rounded-full text-xs font-bold text-slate-600 hover:bg-slate-100">Cancel</button>
+                        <button type="submit" class="px-5 py-2 rounded-full text-xs font-bold text-white btn-emerald shadow-md" x-text="snippetEditMode ? 'Update' : 'Save'"></button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI WIN/LOSS INSIGHTS MODAL -->
+    <div x-show="isInsightsModalOpen" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen p-4">
+            <div @click="isInsightsModalOpen = false" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm overlay-in"></div>
+            <div class="dialog-in bg-white rounded-3xl p-6 w-full max-w-2xl shadow-overlay border border-slate-200 relative z-10">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-4">
+                    <div class="flex items-center space-x-2.5">
+                        <div class="h-8 w-8 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600">
+                            <i class="fa-solid fa-brain text-sm"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-base font-bold text-slate-900">AI Win/Loss Intelligence Report</h3>
+                            <p class="text-xs text-slate-500">Gemini-powered strategic analysis across closed sales opportunities.</p>
+                        </div>
+                    </div>
+                    <button @click="isInsightsModalOpen = false" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg transition">
+                        <i class="fa-solid fa-xmark text-sm"></i>
+                    </button>
+                </div>
+
+                <div class="py-4">
+                    <div x-show="loadingInsights" class="py-12 text-center">
+                        <i class="fa-solid fa-circle-notch fa-spin text-indigo-600 text-2xl mb-3"></i>
+                        <p class="text-xs font-semibold text-slate-600">Analyzing closed pipeline patterns with Gemini...</p>
+                    </div>
+
+                    <div x-show="!loadingInsights && insightsContent" class="max-h-[60vh] overflow-y-auto pr-1">
+                        <div class="text-[11px] font-mono text-slate-700 whitespace-pre-line leading-relaxed bg-slate-50 p-4 rounded-2xl border border-slate-200 overflow-x-auto" x-text="insightsContent"></div>
+                    </div>
+                </div>
+
+                <div class="pt-3 border-t border-slate-100 flex items-center justify-between">
+                    <button 
+                        @click="generateInsights()" 
+                        :disabled="loadingInsights || postingInsights"
+                        class="px-4 py-2 rounded-full text-xs font-bold text-slate-600 hover:bg-slate-100 border border-slate-200 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i class="fa-solid fa-arrows-rotate mr-1.5 text-[10px]"></i>
+                        <span>Re-Analyze</span>
+                    </button>
+
+                    <div class="flex items-center space-x-2">
+                        <button 
+                            @click="postInsightsToSlack()" 
+                            :disabled="loadingInsights || postingInsights || !insightsContent"
+                            class="px-4 py-2 rounded-full text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                            <i class="fa-brands fa-slack mr-1.5 text-xs" x-show="!postingInsights"></i>
+                            <i class="fa-solid fa-circle-notch fa-spin mr-1.5 text-xs" x-show="postingInsights"></i>
+                            <span x-text="postingInsights ? 'Posting...' : 'Post to Slack'"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TOAST NOTIFICATIONS -->
+    <div class="fixed bottom-6 right-6 z-50 space-y-2 pointer-events-none" x-cloak>
+        <template x-for="toast in toasts" :key="toast.id">
+            <div 
+                x-transition:enter="transition ease-out duration-300"
+                x-transition:enter-start="opacity-0 translate-y-2"
+                x-transition:enter-end="opacity-100 translate-y-0"
+                class="flex items-center space-x-2.5 px-4 py-2.5 rounded-full border shadow-raised text-xs font-semibold pointer-events-auto bg-ink text-white border-line">
+                <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+                <span x-text="toast.message"></span>
+            </div>
+        </template>
+    </div>
+
+    <!-- ALPINE JS DATA LOGIC -->
+    <script>
+        function dashboardApp() {
+            return {
+                activeTag: 'delivery',
+                currentView: 'delivery',
+                isLoading: false,
+
+                // Displayed values for the two hero stat numbers. They are
+                // driven separately from the arrays so the count-up animation
+                // has something stable to tween toward.
+                statBridges: 0,
+                statLeads: 0,
+                _countRaf: null,
+
+                // Tween a stat toward its target with an ease-out curve. Uses
+                // one shared rAF, so several counters never fight over frames.
+                animateCount(key, target) {
+                    const dur = 650;
+                    const from = this[key] || 0;
+                    const to = Number(target) || 0;
+                    if (from === to) return;
+                    if (this._countRaf) cancelAnimationFrame(this._countRaf);
+                    const t0 = performance.now();
+                    const self = this;
+                    const step = (now) => {
+                        const p = Math.min(1, (now - t0) / dur);
+                        const eased = 1 - Math.pow(1 - p, 3);
+                        self[key] = Math.round(from + (to - from) * eased);
+                        if (p < 1) {
+                            self._countRaf = requestAnimationFrame(step);
+                        } else {
+                            self._countRaf = null;
+                            self[key] = to;
+                        }
+                    };
+                    this._countRaf = requestAnimationFrame(step);
+                },
+
+                syncStatCounters() {
+                    this.animateCount('statBridges', this.deliveryMappings.length + this.salesLeads.length);
+                    this.animateCount('statLeads', this.salesLeads.length);
+                },
+
+                deliveryMappings: [],
+                deliverySearch: '',
+                deliveryPlatformFilter: 'ALL',
+
+                salesLeads: [],
+                salesSearch: '',
+                salesStageFilter: 'ALL',
+                salesScoreFilter: 'ALL',
+                contactSearch: '',
+
+                salesPool: [],
+                blocklist: [],
+                snippets: [],
+                leaderboardMetrics: [],
+
+                get leaderboard() {
+                    const metrics = this.leaderboardMetrics || [];
+                    let mapped = this.salesPool.map(rep => {
+                        const m = metrics.find(x => x.owner_slack_id === rep.slack_user_id);
+                        return {
+                            ...rep,
+                            wins: m ? m.wins : 0,
+                            lead_active: m ? m.active : 0
+                        };
+                    });
+                    mapped.sort((a, b) => {
+                        if (b.wins !== a.wins) return b.wins - a.wins;
+                        return b.lead_active - a.lead_active;
+                    });
+                    return mapped;
+                },
+
+                settings: {
+                    kill_switch_autocreate: false,
+                    triage_mode_enabled: false,
+                    triage_channel_id: '',
+                    sla_minutes: 15,
+                    archive_after_days: 30,
+                    sunday_autoreply_enabled: false,
+                    sunday_autoreply_text: '',
+                    digest_enabled: true,
+                    digest_channel_id: '',
+                    digest_time: '09:00'
+                },
+
+                // Settings are owned by the server. settingsLoaded gates saving
+                // so stale hardcoded defaults can never overwrite real values.
+                settingsLoaded: false,
+                settingsLoadError: null,
+                _settingsSnapshot: null,
+
+                triggeringDigest: false,
+                health: { whatsapp_bridge: false, whatsapp_gateway: false },
+                bridgeEmergency: { active: false, since: null, inbound_dropped: 0, outbound_blocked: 0, outbox_held: 0 },
+
+                isInsightsModalOpen: false,
+                loadingInsights: false,
+                postingInsights: false,
+                insightsContent: '',
+
+                editMode: false,
+                editingRowIdx: null,
+                isAddModalOpen: false,
+                isHandoffTableModalOpen: false,
+                formData: { platform: 'WhatsApp', client_name: '', external_id: '', slack_channel_id: '', paused: false, salesRowToPause: '' },
+
+                isAddRepModalOpen: false,
+                repFormData: { name: '', slack_user_id: '', active: true },
+
+                isBlocklistModalOpen: false,
+                blockFormData: { external_id: '', reason: 'Spam' },
+
+                isSnippetModalOpen: false,
+                snippetEditMode: false,
+                snippetFormData: { row_idx: null, title: '', content: '' },
+
+                toasts: [],
+                isAuthenticated: false,
+                authChecking: true,
+                authLoading: false,
+                authError: '',
+                loginForm: { id: '', password: '' },
+                currentUser: '',
+                loginTimestamp: 0,
+
+                async init() {
+                    await this.checkAuth();
+                    if (this.isAuthenticated) {
+                        // Settle the two hero counters once both lists land,
+                        // so the first paint shows real numbers, not zeros.
+                        await Promise.all([
+                            this.fetchDeliveryMappings(),
+                            this.fetchSalesLeads(),
+                            this.fetchSalesPool(),
+                            this.fetchSettings(),
+                            this.fetchBlocklist(),
+                            this.fetchSnippets(),
+                            this.fetchLeaderboard(),
+                        ]);
+                        this.syncStatCounters();
+
+                        this.fetchHealth();
+                    }
+                    // Background health and 5-minute auth heartbeat check
+                    setInterval(() => {
+                        if (this.isAuthenticated) {
+                            this.fetchHealth();
+                            this.checkAuth();
+                        }
+                    }, 10000);
+                },
+
+                async checkAuth() {
+                    try {
+                        const res = await fetch('/api/auth/check');
+                        const data = await res.json();
+                        if (data.authenticated) {
+                            this.isAuthenticated = true;
+                            this.currentUser = data.user || '';
+                        } else {
+                            if (this.isAuthenticated) {
+                                this.showToast('Session expired after 5 minutes. Please log in.');
+                            }
+                            this.isAuthenticated = false;
+                            this.currentUser = '';
+                        }
+                    } catch (e) {
+                        this.isAuthenticated = false;
+                    } finally {
+                        this.authChecking = false;
+                    }
+                },
+
+                async submitLogin() {
+                    if (!this.loginForm.id || !this.loginForm.password) {
+                        this.authError = 'Please enter both ID and Password';
+                        return;
+                    }
+                    this.authLoading = true;
+                    this.authError = '';
+                    try {
+                        const res = await fetch('/api/auth/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id: this.loginForm.id, password: this.loginForm.password })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.isAuthenticated = true;
+                            this.currentUser = data.user || this.loginForm.id;
+                            this.showToast(`Welcome back, ${this.currentUser}!`);
+                            this.loginForm = { id: '', password: '' };
+                            this.fetchDeliveryMappings();
+                            this.fetchSalesLeads();
+                            this.fetchSalesPool();
+                            this.fetchSettings();
+                            this.fetchBlocklist();
+                            this.fetchSnippets();
+                            this.fetchLeaderboard();
+                            this.fetchHealth();
+                        } else {
+                            this.authError = data.error || 'Invalid credentials';
+                        }
+                    } catch (e) {
+                        this.authError = 'Server connection error. Please try again.';
+                    } finally {
+                        this.authLoading = false;
+                    }
+                },
+
+                async logout() {
+                    try {
+                        await fetch('/api/auth/logout', { method: 'POST' });
+                    } catch (e) {}
+                    this.isAuthenticated = false;
+                    this.currentUser = '';
+                    this.showToast('Logged out successfully');
+                },
+
+                showToast(message) {
+                    const id = Date.now();
+                    this.toasts.push({ id, message });
+                    setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 3500);
+                },
+
+                async fetchHealth() {
+                    try {
+                        const res = await fetch('/api/health');
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.health.whatsapp_bridge = data.bridges?.whatsapp_bridge?.online || false;
+                            this.health.whatsapp_gateway = data.bridges?.whatsapp_gateway?.online || false;
+                            this.bridgeEmergency = data.bridges?.whatsapp_bridge?.emergency_stop
+                                || { active: false, since: null, inbound_dropped: 0, outbound_blocked: 0, outbox_held: 0 };
+                        }
+                    } catch (e) {}
+                },
+
+                async fetchDeliveryMappings() {
+                    try {
+                        const res = await fetch('/api/delivery/mappings');
+                        const json = await res.json();
+                        if (json.success) this.deliveryMappings = json.data || [];
+                    } catch (e) {}
+                },
+
+                async fetchSalesLeads() {
+                    try {
+                        const res = await fetch('/api/sales/leads');
+                        const json = await res.json();
+                        if (json.success) this.salesLeads = json.data || [];
+                    } catch (e) {}
+                },
+
+                async fetchSalesPool() {
+                    try {
+                        const res = await fetch('/api/sales/pool');
+                        const json = await res.json();
+                        if (json.success) this.salesPool = json.data || [];
+                    } catch (e) {}
+                },
+
+                async fetchSettings() {
+                    try {
+                        const res = await fetch('/api/sales/settings');
+                        const json = await res.json();
+                        if (json.success) {
+                            this.settings = { ...this.settings, ...json.data };
+                            this.settingsLoaded = true;
+                            this._settingsSnapshot = { ...this.settings };
+                        } else {
+                            this.settingsLoadError = json.error || 'Failed to load settings';
+                        }
+                    } catch (e) {
+                        this.settingsLoadError = 'Failed to reach the server to load settings';
+                    }
+                },
+
+                // Settings are authoritative on the server. Save one key at a
+                // time and surface failures, so the dashboard can never show a
+                // value the system is not actually using.
+                async saveSettings(key = null) {
+                    if (!this.settingsLoaded) {
+                        this.showToast('Settings not loaded - refusing to save. Reload the page.');
+                        return;
+                    }
+                    const previous = this._settingsSnapshot;
+                    const payload = (key === null) ? { ...this.settings } : { [key]: this.settings[key] };
+                    // Send what we last read so the server can reject this write
+                    // if another tab changed the same setting in the meantime.
+                    const expected = {};
+                    for (const k of Object.keys(payload)) {
+                        if (previous && k in previous) expected[k] = previous[k];
+                    }
+                    payload._expected = expected;
+                    try {
+                        const res = await fetch('/api/sales/settings', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        const json = await res.json();
+                        if (!res.ok || !json.success) {
+                            if (json.conflicts) {
+                                await this.fetchSettings();
+                            } else if (previous) {
+                                this.settings = { ...previous };
+                            }
+                            this.showToast('Not saved: ' + (json.error || 'server rejected the change'));
+                            return;
+                        }
+                        this._settingsSnapshot = { ...this.settings };
+                        this.showToast('Saved');
+                    } catch (e) {
+                        if (previous) this.settings = { ...previous };
+                        this.showToast('Not saved: could not reach the server');
+                    }
+                },
+
+                async fetchBlocklist() {
+                    try {
+                        const res = await fetch('/api/sales/blocklist');
+                        const json = await res.json();
+                        if (json.success) this.blocklist = json.data || [];
+                    } catch (e) {}
+                },
+
+                async fetchSnippets() {
+                    try {
+                        const res = await fetch('/api/sales/snippets');
+                        const json = await res.json();
+                        if (json.success) {
+                            // Backend already returns row_idx as the stable database id.
+                            this.snippets = json.snippets || [];
+                        }
+                    } catch (e) {}
+                },
+
+                async fetchLeaderboard() {
+                    try {
+                        const res = await fetch('/api/sales/leaderboard');
+                        const json = await res.json();
+                        if (json.success) {
+                            this.leaderboardMetrics = json.leaderboard || [];
+                        }
+                    } catch (e) {}
+                },
+
+                async refreshAll() {
+                    this.isLoading = true;
+                    await Promise.all([
+                        this.fetchDeliveryMappings(),
+                        this.fetchSalesLeads(),
+                        this.fetchSalesPool(),
+                        this.fetchSettings(),
+                        this.fetchBlocklist(),
+                        this.fetchSnippets(),
+                        this.fetchLeaderboard(),
+                        this.fetchHealth()
+                    ]);
+                    this.isLoading = false;
+                    this.syncStatCounters();
+                    this.showToast('Data reloaded');
+                },
+
+                get activeBridgesCapsules() {
+                    const total = this.deliveryMappings.length + this.salesLeads.length;
+                    if (total === 0) return 6; // Default full if operational
+                    const activeCount = this.deliveryMappings.filter(m => !m.paused).length + this.salesLeads.filter(l => !l.paused).length;
+                    const ratio = activeCount / total;
+                    return Math.max(1, Math.round(ratio * 6));
+                },
+
+                get salesPipelineCapsules() {
+                    const total = this.salesLeads.length;
+                    if (total === 0) return 1;
+                    const won = this.salesLeads.filter(l => l.stage === 'won').length;
+                    const ratio = won / total;
+                    return Math.max(1, Math.min(6, Math.round(ratio * 6)));
+                },
+
+                platformBadgeClass(platform) {
+                    const p = (platform || '').toLowerCase();
+                    if (p.includes('telegram')) return 'bg-sky-100 text-sky-800';
+                    if (p.includes('discord')) return 'bg-indigo-100 text-indigo-800';
+                    return 'bg-emerald-100 text-emerald-800';
+                },
+
+                platformIconClass(platform) {
+                    const p = (platform || '').toLowerCase();
+                    if (p.includes('telegram')) return 'fa-brands fa-telegram';
+                    if (p.includes('discord')) return 'fa-brands fa-discord';
+                    return 'fa-brands fa-whatsapp';
+                },
+
+                get filteredDeliveryMappings() {
+                    return this.deliveryMappings.filter(item => {
+                        const matchSearch = !this.deliverySearch || 
+                            item.client_name.toLowerCase().includes(this.deliverySearch.toLowerCase()) ||
+                            item.external_id.toLowerCase().includes(this.deliverySearch.toLowerCase()) ||
+                            item.slack_channel_id.toLowerCase().includes(this.deliverySearch.toLowerCase());
+                        const matchPlatform = this.deliveryPlatformFilter === 'ALL' || item.platform === this.deliveryPlatformFilter;
+                        return matchSearch && matchPlatform;
+                    });
+                },
+
+                get filteredSalesLeads() {
+                    return this.salesLeads.filter(lead => {
+                        const matchSearch = !this.salesSearch || 
+                            lead.client_name.toLowerCase().includes(this.salesSearch.toLowerCase()) ||
+                            lead.external_id.toLowerCase().includes(this.salesSearch.toLowerCase()) ||
+                            lead.slack_channel_id.toLowerCase().includes(this.salesSearch.toLowerCase());
+                        const matchStage = this.salesStageFilter === 'ALL' || lead.stage === this.salesStageFilter;
+                        const matchScore = this.salesScoreFilter === 'ALL' || lead.lead_score === this.salesScoreFilter;
+                        return matchSearch && matchStage && matchScore;
+                    });
+                },
+
+                get filteredContacts() {
+                    return this.salesLeads.filter(contact => {
+                        if (!this.contactSearch) return true;
+                        const q = this.contactSearch.toLowerCase();
+                        return (contact.client_name && contact.client_name.toLowerCase().includes(q)) ||
+                               (contact.external_id && contact.external_id.toLowerCase().includes(q)) ||
+                               (contact.slack_channel_id && contact.slack_channel_id.toLowerCase().includes(q));
+                    });
+                },
+
+                openAddSnippetModal() {
+                    this.snippetEditMode = false;
+                    this.snippetFormData = { row_idx: null, title: '', content: '' };
+                    this.isSnippetModalOpen = true;
+                },
+
+                openEditSnippetModal(snippet) {
+                    this.snippetEditMode = true;
+                    this.snippetFormData = {
+                        row_idx: snippet.row_idx,
+                        title: snippet.title || '',
+                        content: snippet.content || ''
+                    };
+                    this.isSnippetModalOpen = true;
+                },
+
+                async submitSnippetForm() {
+                    try {
+                        let res;
+                        if (this.snippetEditMode && this.snippetFormData.row_idx) {
+                            res = await fetch(`/api/sales/snippets/${this.snippetFormData.row_idx}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ title: this.snippetFormData.title, content: this.snippetFormData.content })
+                            });
+                        } else {
+                            res = await fetch('/api/sales/snippets', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ title: this.snippetFormData.title, content: this.snippetFormData.content })
+                            });
+                        }
+                        const json = await res.json();
+                        if (json.success) {
+                            this.isSnippetModalOpen = false;
+                            this.fetchSnippets();
+                            this.showToast(this.snippetEditMode ? 'Snippet updated!' : 'Snippet created!');
+                        } else {
+                            this.showToast('Failed to save snippet: ' + (json.error || 'Unknown error'), true);
+                        }
+                    } catch (e) {
+                        this.showToast('Network error saving snippet', true);
+                    }
+                },
+
+                async deleteSnippet(snippet) {
+                    if (!confirm(`Are you sure you want to delete the snippet "${snippet.title}"?`)) return;
+                    try {
+                        const res = await fetch(`/api/sales/snippets/${snippet.row_idx}`, { method: 'DELETE' });
+                        const json = await res.json();
+                        if (json.success) {
+                            this.fetchSnippets();
+                            this.showToast('Snippet deleted!');
+                        } else {
+                            this.showToast('Failed to delete snippet: ' + (json.error || 'Unknown error'), true);
+                        }
+                    } catch (e) {
+                        this.showToast('Network error deleting snippet', true);
+                    }
+                },
+
+
+                startHandoff(lead) {
+                    this.isHandoffTableModalOpen = false;
+                    this.formData = {
+                        platform: (lead.platform.toLowerCase() === 'wa' || lead.platform.toLowerCase() === 'whatsapp') ? 'WhatsApp' : 'Telegram',
+                        client_name: lead.client_name || '',
+                        external_id: lead.external_id || '',
+                        slack_channel_name: '',
+                        slack_channel_id: '',
+                        paused: false,
+                        // Handoff auto-pauses the sales lead by external_id server-side.
+                        salesRowToPause: ''
+                    };
+                    this.editMode = false;
+                    this.isAddModalOpen = true;
+                },
+
+                openAddModal() {
+                    this.editMode = false;
+                    this.editingRowIdx = null;
+                    this.formData = { platform: 'WhatsApp', client_name: '', external_id: '', slack_channel_name: '', slack_channel_id: '', paused: false, salesRowToPause: '' };
+                    this.isAddModalOpen = true;
+                },
+
+                openEditModal(item) {
+                    this.editMode = true;
+                    this.editingRowIdx = item.row_idx;
+                    this.formData = {
+                        platform: item.platform || 'WhatsApp',
+                        client_name: item.client_name || '',
+                        external_id: item.external_id || '',
+                        slack_channel_id: item.slack_channel_id || '',
+                        paused: item.paused || false
+                    };
+                    this.isAddModalOpen = true;
+                },
+
+                async submitDeliveryForm() {
+                    try {
+                        let res;
+                        if (this.editMode && this.editingRowIdx) {
+                            res = await fetch(`/api/delivery/mappings/${this.editingRowIdx}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(this.formData)
+                            });
+                        } else {
+                            res = await fetch('/api/delivery/mappings', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(this.formData)
+                            });
+                        }
+                        const json = await res.json();
+
+                        if (json.success) {
+                            // The server automatically pauses the linked sales lead upon successful creation.
+                            this.showToast(this.editMode ? `Client "${this.formData.client_name}" updated!` : `Client "${this.formData.client_name}" added!`);
+                            this.isAddModalOpen = false;
+                            await this.fetchDeliveryMappings();
+
+                        } else {
+                            this.showToast(json.error || 'Failed to save client');
+                        }
+                    } catch (e) {
+                        this.showToast('Error saving client mapping');
+                    }
+                },
+
+                async confirmDelete(item) {
+                    if (!confirm(`Are you sure you want to delete delivery mapping for "${item.client_name}"?`)) {
+                        return;
+                    }
+                    try {
+                        const res = await fetch(`/api/delivery/mappings/${item.row_idx}`, { method: 'DELETE' });
+                        const json = await res.json();
+                        if (json.success) {
+                            this.showToast(`Deleted mapping for "${item.client_name}"`);
+                            await this.fetchDeliveryMappings();
+                        } else {
+                            this.showToast(json.error || 'Failed to delete');
+                        }
+                    } catch (e) {
+                        this.showToast('Error deleting delivery mapping');
+                    }
+                },
+
+                async togglePause(item) {
+                    try {
+                        const res = await fetch(`/api/delivery/mappings/${item.row_idx}/pause`, { method: 'POST' });
+                        const json = await res.json();
+                        if (json.success) {
+                            item.paused = json.paused;
+                            this.showToast(`${item.client_name} is now ${item.paused ? 'Paused' : 'Active'}`);
+                        }
+                    } catch (e) {}
+                },
+
+                async toggleLeadPause(lead) {
+                    lead.paused = !lead.paused;
+                    try {
+                        const res = await fetch(`/api/sales/leads/${lead.external_id}`, {
+                            method: 'PUT',
+                            body: JSON.stringify({ paused: lead.paused, row_idx: lead.row_idx })
+                        });
+                        const json = await res.json();
+                        if (json.success) {
+                            this.showToast(`${lead.client_name} is now ${lead.paused ? 'Paused' : 'Active'}`);
+                        } else {
+                            lead.paused = !lead.paused; // revert on failure
+                            alert("Error: " + (json.error || 'Failed to update lead'));
+                        }
+                    } catch (e) {
+                        lead.paused = !lead.paused; // revert on failure
+                    }
+                },
+
+                async updateLeadStage(lead) {
+                    try {
+                        await fetch(`/api/sales/leads/${lead.external_id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ stage: lead.stage, row_idx: lead.row_idx })
+                        });
+                        this.showToast(`${lead.client_name} stage updated to ${lead.stage.toUpperCase()}`);
+                    } catch (e) {}
+                },
+
+                async updateLeadScore(lead) {
+                    try {
+                        await fetch(`/api/sales/leads/${lead.external_id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ lead_score: lead.lead_score, row_idx: lead.row_idx })
+                        });
+                        this.showToast(`Score updated to ${lead.lead_score.toUpperCase()}`);
+                    } catch (e) {}
+                },
+
+                async updateLeadValue(lead) {
+                    try {
+                        await fetch(`/api/sales/leads/${lead.external_id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ deal_value: lead.deal_value, row_idx: lead.row_idx })
+                        });
+                        this.showToast(`Deal value saved`);
+                    } catch (e) {}
+                },
+
+                async updateLeadOwner(lead) {
+                    try {
+                        await fetch(`/api/sales/leads/${lead.external_id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ owner_slack_id: lead.owner_slack_id, row_idx: lead.row_idx })
+                        });
+                        this.showToast(`Owner reassigned`);
+                    } catch (e) {}
+                },
+
+                openAddRepModal() {
+                    this.repFormData = { name: '', slack_user_id: '', active: true };
+                    this.isAddRepModalOpen = true;
+                },
+
+                async submitAddRepForm() {
+                    try {
+                        const res = await fetch('/api/sales/pool', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.repFormData)
+                        });
+                        const json = await res.json();
+                        if (json.success) {
+                            this.showToast(`Rep "${this.repFormData.name}" added`);
+                            this.isAddRepModalOpen = false;
+                            await this.fetchSalesPool();
+                        }
+                    } catch (e) {}
+                },
+
+                async toggleRepActive(rep) {
+                    const newState = !rep.active;
+                    try {
+                        const res = await fetch(`/api/sales/pool/${rep.row_idx}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ active: newState })
+                        });
+                        const json = await res.json();
+                        if (json.success) {
+                            rep.active = newState;
+                            this.showToast(`${rep.name} is now ${newState ? 'Active' : 'on Vacation'}`);
+                        }
+                    } catch (e) {}
+                },
+
+                async deleteRep(rep) {
+                    if (!confirm(`Remove ${rep.name}?`)) return;
+                    try {
+                        await fetch(`/api/sales/pool/${rep.row_idx}`, { method: 'DELETE' });
+                        this.showToast(`${rep.name} removed`);
+                        await this.fetchSalesPool();
+                    } catch (e) {}
+                },
+
+                async toggleKillSwitch() {
+                    const newState = !this.settings.kill_switch_autocreate;
+                    this.settings.kill_switch_autocreate = newState;
+                    await this.saveSettings('kill_switch_autocreate');
+                },
+
+                async toggleTriageMode() {
+                    const newState = !this.settings.triage_mode_enabled;
+                    this.settings.triage_mode_enabled = newState;
+                    await this.saveSettings('triage_mode_enabled');
+                    this.showToast(`Triage Mode is now ${newState ? 'ENABLED' : 'DISABLED'}`);
+                },
+
+                openAddBlocklistModal() {
+                    this.blockFormData = { external_id: '', reason: 'Spam' };
+                    this.isBlocklistModalOpen = true;
+                },
+
+                async submitBlocklistForm() {
+                    try {
+                        const res = await fetch('/api/sales/blocklist', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.blockFormData)
+                        });
+                        const json = await res.json();
+                        if (json.success) {
+                            this.showToast(`${this.blockFormData.external_id} blocked`);
+                            this.isBlocklistModalOpen = false;
+                            await this.fetchBlocklist();
+                        } else {
+                            this.showToast(`⚠️ ${json.error}`);
+                        }
+                    } catch (e) {
+                        this.showToast(`⚠️ Failed to block: ${e.message}`);
+                    }
+                },
+
+                async deleteBlocklistEntry(item) {
+                    if (!confirm(`Unblock ${item.external_id}?`)) return;
+                    try {
+                        await fetch(`/api/sales/blocklist/${item.row_idx}`, { method: 'DELETE' });
+                        this.showToast(`${item.external_id} unblocked`);
+                        await this.fetchBlocklist();
+                    } catch (e) {}
+                },
+
+                async triggerDigest() {
+                    this.triggeringDigest = true;
+                    try {
+                        const res = await fetch('/api/sales/digest/trigger', { method: 'POST' });
+                        const json = await res.json();
+                        if (json.success) {
+                            this.showToast('Daily Sales Digest posted to Slack!');
+                        } else {
+                            this.showToast(json.error || json.message || 'Failed to post digest');
+                        }
+                    } catch (e) {
+                        this.showToast('Error triggering digest');
+                    } finally {
+                        this.triggeringDigest = false;
+                    }
+                },
+
+                openInsightsModal() {
+                    // Always generate on open. Reusing whatever was left on
+                    // screen from a previous visit showed a stale report as
+                    // though it were this week's.
+                    this.isInsightsModalOpen = true;
+                    this.insightsContent = '';
+                    this.generateInsights();
+                },
+
+                async generateInsights() {
+                    this.loadingInsights = true;
+                    try {
+                        const res = await fetch('/api/sales/insights/generate', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ post_to_slack: false })
+                        });
+                        const json = await res.json();
+                        if (json.success) {
+                            this.insightsContent = json.insights;
+                        } else {
+                            this.insightsContent = json.insights || json.error || 'Failed to generate insights.';
+                            this.showToast(json.error || 'Insights generation failed');
+                        }
+                    } catch (e) {
+                        this.insightsContent = 'Error connecting to AI service.';
+                        this.showToast('Error generating insights');
+                    } finally {
+                        this.loadingInsights = false;
+                    }
+                },
+
+                async postInsightsToSlack() {
+                    if (!this.insightsContent || this.postingInsights) return;
+                    this.postingInsights = true;
+                    try {
+                        // Sends the report currently on screen so what is shared
+                        // is exactly what was reviewed. Regenerating here would
+                        // post a different report and spend another AI call.
+                        const res = await fetch('/api/sales/insights/generate', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                post_to_slack: true,
+                                insights: this.insightsContent
+                            })
+                        });
+                        const json = await res.json();
+                        if (json.success) {
+                            this.showToast('AI Win/Loss report posted to Slack!');
+                            this.isInsightsModalOpen = false;
+                        } else {
+                            this.showToast(json.error || 'Could not post to Slack');
+                        }
+                    } catch (e) {
+                        this.showToast('Error posting to Slack');
+                    } finally {
+                        this.postingInsights = false;
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>

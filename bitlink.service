@@ -1,0 +1,26 @@
+[Unit]
+Description=BitLink Unified Process Supervisor (WhatsApp, Telegram, Dashboard, Manager)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/BitLink-Sales/bitlink
+# Points to the virtualenv python running start_services.py
+ExecStart=/opt/BitLink-Sales/bitlink/.venv/bin/python start_services.py
+Restart=always
+RestartSec=5
+KillMode=process
+TimeoutStopSec=30
+Environment=PYTHONUNBUFFERED=1
+
+# Resource limits (optional adjustments)
+LimitNOFILE=65535
+
+# Logging to systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bitlink
+
+[Install]
+WantedBy=multi-user.target

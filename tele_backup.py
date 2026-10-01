@@ -20,7 +20,8 @@ from aiohttp import web
 import threading
 from collections import deque
 
-# Import your existing Google Sheets client
+# Client mapping accessor. The module keeps its legacy g_sheets_client name for
+# import compatibility, but it reads from PostgreSQL only.
 from g_sheets_client import get_client_mappings
 
 # --- 1. INITIALIZATION AND CONFIGURATION ---
@@ -147,7 +148,7 @@ async def reload_config():
     loop = asyncio.get_running_loop()
     logging.info("(Telegram Bridge) Refresh signal received! Reloading config...")
 
-    # Use a thread executor for the synchronous gspread call
+    # The mapping read is a blocking database call, so keep it off the event loop.
     mappings_raw = await loop.run_in_executor(None, get_client_mappings, "Telegram")
 
     if mappings_raw:

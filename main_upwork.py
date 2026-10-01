@@ -183,7 +183,7 @@ def main():
     
     while True:
         try:
-            # Fetch the latest mappings from Google Sheets at the start of each cycle
+            # Fetch the latest mappings from PostgreSQL at the start of each cycle
             upwork_mappings = get_client_mappings("Upwork")
             if not upwork_mappings:
                 logging.warning("No 'Upwork' platform mappings found in Google Sheet. Sleeping.")
