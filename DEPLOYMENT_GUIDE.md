@@ -51,7 +51,7 @@ with the dashboard exposed publicly over HTTPS via **DuckDNS** (free domain) and
 | 2 | [Prerequisites](#2-prerequisites) |
 | 3 | [Set up DuckDNS free domain](#3-set-up-duckdns-free-domain) |
 | 4 | [Install Docker, Nginx, and Certbot on the server](#4-install-docker-nginx-and-certbot-on-the-server) |
-| 5 | [Copy the code to the server](#5-copy-the-code-to-the-server) |
+| 5 | [Clone and deploy from GitHub](#5-clone-and-deploy-from-github) |
 | 6 | [Configure environment variables](#6-configure-environment-variables) |
 | 7 | [Build and start all containers](#7-build-and-start-all-containers) |
 | 8 | [First-time logins (WhatsApp QR + Telegram OTP)](#8-first-time-logins-whatsapp-qr--telegram-otp) |
@@ -176,39 +176,45 @@ nginx -v
 
 ---
 
-## 5. Copy the Code to the Server
+## 5. Clone and Deploy from GitHub
 
-> **🙋 Manual step — run from your local machine (macOS).**
+> **🙋 Run on your Linux server via SSH.**
 
-Choose a home for the code on the server. We use `/opt/bitlink` throughout this guide.
+BitLink is deployed directly from your GitHub repository. Sensitive files, sessions, logs, and database files are excluded via `.gitignore` so they are never committed to GitHub.
+
+### 5.1 Push latest code from local machine to GitHub
+
+On your **local machine (macOS)**, commit and push your changes:
 
 ```bash
-# On your local machine — upload the project
-rsync -avz --progress \
-  --exclude '.venv' \
-  --exclude '__pycache__' \
-  --exclude 'node_modules' \
-  --exclude '.env' \
-  --exclude 'sessions/' \
-  --exclude 'whatsapp-bot/auth_info/' \
-  --exclude 'logs/' \
-  --exclude 'backups/' \
-  --exclude '*.jsonl' \
-  --exclude 'sent_*_alerts.json' \
-  --exclude 'telegram_message_map.json' \
-  --exclude 'telegram_reverse_map.json' \
-  /Users/apple/Desktop/BitLink-Sales/bitlink/ \
-  YOUR_USER@YOUR_SERVER_IP:/opt/bitlink/
+git status
+# Verify that .env, sessions, and credentials are NOT staged
+git add .
+git commit -m "chore: prepare docker deployment and gitignore"
+git push origin <your-branch-or-main>
 ```
 
-> Replace `YOUR_USER` with your SSH username and `YOUR_SERVER_IP` with the server's public IP.
+### 5.2 Clone the repository on the Linux server
 
-On the server, ensure correct permissions:
+SSH into your Linux server and clone the project into `/opt/bitlink`:
 
 ```bash
+# Create directory and assign ownership
 sudo mkdir -p /opt/bitlink
 sudo chown -R $USER:$USER /opt/bitlink
+
+# Clone the repository
+git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git /opt/bitlink
+
+# Or if you are using SSH deploy keys:
+# git clone git@github.com:YOUR_USERNAME/YOUR_REPO.git /opt/bitlink
+
+cd /opt/bitlink
 ```
+
+> **Tip for Private Repositories:** If your GitHub repo is private, either:
+> 1. Use a **Personal Access Token (PAT)** when prompted for the password, or
+> 2. Generate an SSH key on the server (`ssh-keygen -t ed25519`) and add the public key as a **Deploy Key** in your GitHub repo settings (**Settings -> Deploy keys**).
 
 ---
 
@@ -216,10 +222,12 @@ sudo chown -R $USER:$USER /opt/bitlink
 
 > **🙋 Manual step — you must fill in your own API tokens and passwords.**
 
-On the server, create the `.env` file inside the project directory:
+On the server, copy the template `.env.example` to `.env` and fill in your actual credentials:
 
 ```bash
-nano /opt/bitlink/.env
+cd /opt/bitlink
+cp .env.example .env
+nano .env
 ```
 
 ### 6.1 Required — app will not start without these
@@ -828,27 +836,16 @@ docker compose exec db pg_dump -U bitlink bitlink \
   > /opt/bitlink/backups/bitlink_$(date +%Y%m%d_%H%M%S).sql
 ```
 
-### Step 2 — Sync new code from your local machine
+### Step 2 — Pull latest changes from GitHub
 
-Run from your **local machine (macOS)**:
+On the **server**:
 
 ```bash
-rsync -avz --progress \
-  --exclude '.venv' \
-  --exclude '__pycache__' \
-  --exclude 'node_modules' \
-  --exclude '.env' \
-  --exclude 'sessions/' \
-  --exclude 'whatsapp-bot/auth_info/' \
-  --exclude 'logs/' \
-  --exclude 'backups/' \
-  --exclude '*.jsonl' \
-  --exclude 'sent_*_alerts.json' \
-  --exclude 'telegram_message_map.json' \
-  --exclude 'telegram_reverse_map.json' \
-  /Users/apple/Desktop/BitLink-Sales/bitlink/ \
-  YOUR_USER@YOUR_SERVER_IP:/opt/bitlink/
+cd /opt/bitlink
+git pull origin <your-branch-or-main>
 ```
+
+> Your `/opt/bitlink/.env`, session files, and Docker volumes (`pgdata`, `baileys_auth`, `tg_sessions`) will remain completely untouched because they are ignored by Git.
 
 ### Step 3 — Rebuild and restart containers
 
