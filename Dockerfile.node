@@ -1,0 +1,15 @@
+# Dockerfile.node — Used by: gateway (WhatsApp Baileys)
+FROM node:20-alpine
+
+WORKDIR /app/whatsapp-bot
+
+# Install dependencies first (better layer caching)
+COPY whatsapp-bot/package*.json ./
+RUN npm install --production
+
+# Copy the gateway source
+COPY whatsapp-bot/ ./
+
+EXPOSE 3101
+
+CMD ["node", "service-baileys.js"]

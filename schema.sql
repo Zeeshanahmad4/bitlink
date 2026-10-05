@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS sales_leads (
     last_client_msg_at  TIMESTAMPTZ,
     paused              BOOLEAN     NOT NULL DEFAULT FALSE,
     deal_value          NUMERIC(14, 2) NOT NULL DEFAULT 0,
-    closed_at           TIMESTAMPTZ
+    closed_at           TIMESTAMPTZ,
+    delivery_handed_off BOOLEAN     NOT NULL DEFAULT FALSE
 );
 
 -- find_existing_open_lead() and the control panel filter on these every request.
@@ -98,3 +99,73 @@ CREATE TABLE IF NOT EXISTS dashboard_users (
     password_hash TEXT NOT NULL,
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 'admin' may read alert_details (technical detail); 'sales' may not. Existing
+-- rows land on 'sales' so no account is granted privilege by the migration.
+ALTER TABLE dashboard_users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'sales';
+
+-- Project managers are auto-invited into new client channels. The developers
+-- table below is deliberately separate: it controls membership of the private
+-- error channel only, so the two roles can diverge.
+CREATE TABLE IF NOT EXISTS developers (
+    id           BIGSERIAL PRIMARY KEY,
+    slack_user_id TEXT NOT NULL UNIQUE,
+    name         TEXT NOT NULL,
+    active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Sales-facing alerts. Technical detail is never stored in this relation, so
+-- the sales API can SELECT * from it without any risk of leaking a traceback.
+CREATE TABLE IF NOT EXISTS critical_alerts (
+    id              BIGSERIAL PRIMARY KEY,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    severity        TEXT NOT NULL,
+    component       TEXT NOT NULL,
+    code            TEXT NOT NULL,
+    summary_plain   TEXT NOT NULL,
+    context         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    fingerprint     TEXT NOT NULL UNIQUE,
+    occurrences     INT NOT NULL DEFAULT 1,
+    last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    status          TEXT NOT NULL DEFAULT 'open',
+    acknowledged_by TEXT,
+    acknowledged_at TIMESTAMPTZ,
+    slack_permalink TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerts_status_created ON critical_alerts (status, created_at DESC);
+
+-- UNIQUE is what makes the dedup upsert in db_store.record_alert work. The DROP
+-- clears the plain index an earlier revision of this file created under this
+-- name; without it CREATE UNIQUE INDEX ... IF NOT EXISTS would see the name
+-- already taken and silently leave the non-unique index in place.
+DROP INDEX IF EXISTS idx_alerts_fingerprint;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_alerts_fingerprint ON critical_alerts (fingerprint);
+
+-- Kept apart from critical_alerts on purpose: only the admin-gated endpoint
+-- reads this table. It is the single place technical detail is persisted.
+CREATE TABLE IF NOT EXISTS alert_details (
+    alert_id         BIGINT PRIMARY KEY REFERENCES critical_alerts (id) ON DELETE CASCADE,
+    technical_detail TEXT NOT NULL,
+    traceback        TEXT
+);
+
+-- Operational / error alert channels. Critical failures broadcast to all active
+-- channels in this relation.
+CREATE TABLE IF NOT EXISTS alert_channels (
+    id           BIGSERIAL PRIMARY KEY,
+    channel_id   TEXT NOT NULL UNIQUE,
+    channel_name TEXT NOT NULL DEFAULT '',
+    active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Maps developers to the specific alert channels they are assigned to.
+CREATE TABLE IF NOT EXISTS developer_channels (
+    slack_user_id TEXT NOT NULL,
+    channel_id    TEXT NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (slack_user_id, channel_id)
+);
+

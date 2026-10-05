@@ -1,64 +1,132 @@
-# Ignore config file
-config.py
-# Dependencies
-/node_modules
-/whatsapp-bot/node_modules
-credentials/
-service_account.json
-/wa_gateway
-whatsapp-bot/.wwebjs_auth/
-whatsapp-bot/auth_info/
-telegram_reverse_map.json
-# Environment variables
+# =============================================================
+# BitLink — .gitignore
+# =============================================================
+# RULE: If a file contains secrets, session state, or data that
+# belongs only to one running instance, it must be listed here.
+# The .env.example template IS committed — .env is NOT.
+# =============================================================
+
+
+# -------------------------------------------------------
+# Environment / Secrets  (NEVER commit real values)
+# -------------------------------------------------------
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+.env2
+.env3
+config.py
 
-# Logs
-logs
+
+# -------------------------------------------------------
+# Telegram session & message maps  (auth + runtime state)
+# -------------------------------------------------------
+sessions/
+*.session
+telegram_message_map.json
+telegram_reverse_map.json
+
+
+# -------------------------------------------------------
+# WhatsApp session & auth  (QR scan credentials)
+# -------------------------------------------------------
+whatsapp-bot/auth_info/
+whatsapp-bot/.wwebjs_auth/
+whatsapp-bot/.wwebjs_cache/
+whatsapp-bot/sessions/
+whatsapp-bot/notified_groups.json
+
+
+# -------------------------------------------------------
+# Google / Slack credentials  (service account keys)
+# -------------------------------------------------------
+credentials/
+service_account.json
+
+
+# -------------------------------------------------------
+# Runtime / outbox / alert dedup files
+# -------------------------------------------------------
+whatsapp_outbox.jsonl
+telegram_outbox.jsonl
+sent_whatsapp_alerts.json
+sent_telegram_alerts.json
+*.jsonl
+
+
+# -------------------------------------------------------
+# Logs  (can be large and contain message content)
+# -------------------------------------------------------
+logs/
 *.log
+raw_slack_events.log
+slack_events.log
+process_debug.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# OS-generated files
-.DS_Store
-Thumbs.db
 
-# Python virtual environment
-/venv
-/.venv
-/env
-/.env
+# -------------------------------------------------------
+# Internal / operational docs  (not for public repo)
+# -------------------------------------------------------
+coaud.md
+goals_settings.md
+daily-report-*.md
+backups/
 
-# Old env files
-.env2
-.env3
 
-# Python cache
+# -------------------------------------------------------
+# Node.js
+# -------------------------------------------------------
+node_modules/
+/node_modules
+/whatsapp-bot/node_modules
+
+
+# -------------------------------------------------------
+# Python
+# -------------------------------------------------------
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+/venv/
+/.venv/
+/env/
+*.egg-info/
+dist/
+build/
 
-# WhatsApp browser sessions (heavy + sensitive)
-whatsapp-bot/sessions/
-whatsapp-bot/.wwebjs_cache/
 
-# Runtime files
-whatsapp_outbox.jsonl
-sent_whatsapp_alerts.json
-whatsapp-bot/notified_groups.json
+# -------------------------------------------------------
+# Docker build cache (not needed in repo)
+# -------------------------------------------------------
+# docker-compose.override.yml   ← keep this commented out;
+#                                 override files are per-developer
+#                                 but the main compose IS committed.
 
-# Temp downloads
+
+# -------------------------------------------------------
+# Tests (generated on server, not shipped with repo)
+# -------------------------------------------------------
+tests/
+
+
+# -------------------------------------------------------
+# Temp / OS files
+# -------------------------------------------------------
+.DS_Store
+Thumbs.db
 temp_downloads_telegram/
 
-# Telegram session (sensitive)
-bitlink_telegram.session
-backups
-sessions
-tests
+
+# -------------------------------------------------------
+# Legacy / generated files excluded from the server deploy
+# -------------------------------------------------------
 ecosystem.config.js
 nginx-bitlink.conf
-telegram_message_map.json
-
+uv.lock

@@ -73,3 +73,8 @@ def update_round_robin_cursor(new_index: int) -> bool:
 def update_lead_owner_by_channel(channel_id: str, new_owner_slack_id: str,
                                  external_id: Optional[str] = None) -> bool:
     return db_store.update_lead_owner_by_channel(channel_id, new_owner_slack_id, external_id)
+
+
+def find_delivery_mapping_by_external_id(external_id: str) -> Optional[Dict[str, Any]]:
+    return db_store.find_delivery_mapping_by_external_id(external_id)
+

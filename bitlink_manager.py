@@ -8,6 +8,7 @@ from io import BytesIO
 from pathlib import Path
 import requests
 import db_store
+import critical_alerts
 import ai_context
 import ai_prompts
 from gemini_client import call_gemini_api
@@ -27,24 +28,21 @@ MANAGER_BOT_TOKEN = os.getenv("MANAGER_SLACK_BOT_TOKEN")
 MANAGER_APP_TOKEN = os.getenv("MANAGER_SLACK_APP_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not MANAGER_BOT_TOKEN or not MANAGER_APP_TOKEN:
-    logging.error("Missing MANAGER_SLACK_BOT_TOKEN or MANAGER_SLACK_APP_TOKEN in .env. Exiting.")
-    sys.exit(1)
-
 WHATSAPP_REFRESH_PORT = int(os.getenv("WHATSAPP_REFRESH_PORT", 8101))
 TELEGRAM_REFRESH_PORT = int(os.getenv("TELEGRAM_REFRESH_PORT", 8003))
 
 from concurrent.futures import ThreadPoolExecutor
 thread_pool = ThreadPoolExecutor(max_workers=10)
 
-web_client = WebClient(token=MANAGER_BOT_TOKEN)
-try:
-    auth_test = web_client.auth_test()
-    slack_bot_user_id = auth_test["user_id"]
-    logging.info(f"Manager Bot User ID: {slack_bot_user_id}")
-except SlackApiError as e:
-    logging.error(f"Error authenticating with Slack: {e}")
-    sys.exit(1)
+web_client = WebClient(token=MANAGER_BOT_TOKEN) if MANAGER_BOT_TOKEN else None
+slack_bot_user_id = os.getenv("MASTER_SLACK_BOT_ID", "")
+if web_client:
+    try:
+        auth_test = web_client.auth_test()
+        slack_bot_user_id = auth_test.get("user_id", slack_bot_user_id)
+        logging.info(f"Manager Bot User ID: {slack_bot_user_id}")
+    except Exception as e:
+        logging.warning(f"Manager Bot auth_test check: {e}")
 
 # Function to trigger refresh on all apps
 def trigger_refresh_all_apps():
@@ -155,7 +153,7 @@ def handle_slack_slash_commands(client: SocketModeClient, req, web_client: WebCl
             logging.error(f"Error opening handoff modal from command: {e}")
 
     # --- COMMAND 3: /suggest ---
-    elif command == "/suggest":
+    elif command in ["/suggest", "/suggest-reply", "/suggest_reply"]:
         try:
             loading_modal = {
                 "type": "modal",
@@ -179,13 +177,14 @@ def handle_slack_slash_commands(client: SocketModeClient, req, web_client: WebCl
                     view_id,
                     channel_id,
                     slack_bot_user_id,
-                    web_client
+                    web_client,
+                    text
                 )
         except Exception as e:
             logging.error(f"Error opening suggest modal from command: {e}")
 
-    # --- COMMAND 4: /summary ---
-    elif command == "/summary":
+    # --- COMMAND 4: /summary or /summarize ---
+    elif command in ["/summary", "/summarize", "/summarize-chat", "/summarize_chat"]:
         try:
             summary_loading_modal = {
                 "type": "modal",
@@ -215,7 +214,7 @@ def handle_slack_slash_commands(client: SocketModeClient, req, web_client: WebCl
             logging.error(f"Error opening summary modal from command: {e}")
 
     # --- COMMAND 5: /reply-with-ai ---
-    elif command == "/reply-with-ai":
+    elif command in ["/reply-with-ai", "/reply_with_ai", "/replywithai", "/reply-ai", "/reply"]:
         try:
             loading_modal = {
                 "type": "modal",
@@ -239,7 +238,8 @@ def handle_slack_slash_commands(client: SocketModeClient, req, web_client: WebCl
                     view_id,
                     channel_id,
                     slack_bot_user_id,
-                    web_client
+                    web_client,
+                    text
                 )
         except Exception as e:
             logging.error(f"Error opening AI suggest loading modal: {e}")
@@ -353,7 +353,7 @@ def handle_slack_slash_commands(client: SocketModeClient, req, web_client: WebCl
 
 
 def handle_modal_submission(client: SocketModeClient, req, web_client: WebClient):
-    """Handles modal submissions (Enhance message and Handoff lead)."""
+    """Handles modal submissions (Enhance message, Handoff lead, AI Suggest, Snippet)."""
     if req.type != "interactive":
         return
 
@@ -361,11 +361,16 @@ def handle_modal_submission(client: SocketModeClient, req, web_client: WebClient
     if payload.get("type") != "view_submission":
         return
 
+    # Immediately acknowledge view submission (< 5ms) to satisfy Slack timeout
+    try:
+        client.send_socket_mode_response({"envelope_id": req.envelope_id})
+    except Exception as ack_err:
+        logging.warning(f"Could not ack modal submission: {ack_err}")
+
     callback_id = payload.get("view", {}).get("callback_id")
 
     # 1. Enhance Modal Submission
     if callback_id == "enhance_modal_submission":
-        client.send_socket_mode_response({"envelope_id": req.envelope_id})
         channel_id = payload.get("view", {}).get("private_metadata", "")
         view_state = payload.get("view", {}).get("state", {}).get("values", {})
         final_message = view_state.get("enhanced_text_block", {}).get("enhanced_text_input", {}).get("value")
@@ -385,8 +390,6 @@ def handle_modal_submission(client: SocketModeClient, req, web_client: WebClient
 
     # 2. Handoff Lead Modal Submission
     elif callback_id == "handoff_modal_submission":
-        client.send_socket_mode_response({"envelope_id": req.envelope_id})
-        
         user = payload.get("user", {})
         from_user_id = user.get("id")
         
@@ -433,7 +436,6 @@ def handle_modal_submission(client: SocketModeClient, req, web_client: WebClient
 
     # 3. AI Suggest Reply Modal Submission (Send Draft)
     elif callback_id == "ai_suggest_modal_submission":
-        client.send_socket_mode_response({"envelope_id": req.envelope_id})
         channel_id = payload.get("view", {}).get("private_metadata", "")
         view_state = payload.get("view", {}).get("state", {}).get("values", {})
         draft_block = view_state.get("draft_text_block", {}).get("ai_draft_input", {})
@@ -443,8 +445,10 @@ def handle_modal_submission(client: SocketModeClient, req, web_client: WebClient
             logging.error("Could not extract channel_id or message from AI suggest submission.")
             return
 
+        manager_token = os.getenv("MANAGER_SLACK_BOT_TOKEN") or web_client.token
         try:
-            post_resp = web_client.chat_postMessage(
+            post_client = WebClient(token=manager_token)
+            post_resp = post_client.chat_postMessage(
                 channel=channel_id,
                 text=final_message
             )
@@ -514,6 +518,7 @@ def generate_sales_reply_ai(chat_history: str, raw_draft: str = "") -> str:
         if not chat_history.strip():
             chat_history = "CLIENT (the client): (Inbound inquiry just started)"
 
+        logging.info(f"📜 [AI CONTEXT] Conversation sent to Gemini for reply draft:\n{chat_history}")
         prompt = ai_prompts.build_reply_prompt(chat_history, raw_draft)
 
         reply = call_gemini_api(prompt, timeout=30)
@@ -539,34 +544,77 @@ def format_sales_chat_history(messages, bot_user_id, client_names=()):
 
 def get_client_names_for_channel(channel_id: str) -> list:
     """Best-effort lookup of this channel's client display name(s)."""
+    names = []
     try:
+        # Check sales leads first (most common for sales channels)
+        for lead in db_store.get_sales_leads() or []:
+            if lead.get("slack_channel_id") == channel_id and lead.get("client_name"):
+                names.append(lead["client_name"])
+        # Check delivery/client mappings
         for platform in ("WhatsApp", "Telegram"):
             for item in db_store.get_client_mappings(platform) or []:
                 if item.get("slack_channel_id") == channel_id and item.get("client_name"):
-                    return [item["client_name"]]
+                    if item["client_name"] not in names:
+                        names.append(item["client_name"])
     except Exception as e:
         logging.debug(f"No client mapping for {channel_id}: {e}")
-    return []
+    return names
+
+
+def get_channel_fallback_web_clients():
+    """Returns WebClient instances for primary bridge bots that belong to channels."""
+    clients = []
+    seen_tokens = {MANAGER_BOT_TOKEN}
+    for env_var in ("SLACK_BOT_TOKEN", "SLACK_BOT_TOKEN_TELEGRAM"):
+        tok = (os.getenv(env_var) or "").strip()
+        if tok and tok not in seen_tokens:
+            seen_tokens.add(tok)
+            try:
+                clients.append(WebClient(token=tok))
+            except Exception as e:
+                logging.debug(f"Failed to create fallback WebClient for {env_var}: {e}")
+    return clients
 
 
 def build_channel_transcript(web_client, channel_id: str, name_cache=None) -> str:
     """Fetch the whole channel and return it as a labelled transcript."""
-    messages = ai_context.fetch_conversation(web_client, channel_id)
-    return ai_context.build_transcript(
+    fallback_clients = get_channel_fallback_web_clients()
+
+    # If fallback clients exist, ensure Master Bot is invited to channel so it can read future events
+    master_bot_user_id = os.getenv("MASTER_SLACK_BOT_ID") or slack_bot_user_id
+    if master_bot_user_id:
+        for fb_client in fallback_clients:
+            try:
+                fb_client.conversations_invite(channel=channel_id, users=master_bot_user_id)
+                logging.info(f"Invited Manager Bot ({master_bot_user_id}) to {channel_id}")
+                break
+            except Exception:
+                pass
+
+    messages = ai_context.fetch_conversation(
+        web_client,
+        channel_id,
+        fallback_clients=fallback_clients
+    )
+    logging.info(f"Fetched {len(messages)} messages for channel {channel_id}")
+
+    transcript = ai_context.build_transcript(
         messages,
         client_names=get_client_names_for_channel(channel_id),
         name_cache=name_cache,
     )
+    logging.info(f"📜 [AI CONTEXT] Formatted transcript for Gemini (Channel {channel_id}):\n{transcript if transcript.strip() else '(Empty transcript)'}")
+    return transcript
 
 
-def async_generate_and_update_suggest_modal(view_id: str, channel_id: str, bot_user_id: str, web_client: WebClient):
+def async_generate_and_update_suggest_modal(view_id: str, channel_id: str, bot_user_id: str, web_client: WebClient, raw_draft: str = ""):
     """Background worker: fetches chat history, generates AI draft, and updates modal view."""
     try:
         # Fetch the whole channel, not a 15-message slice.
         name_cache = ai_context._UserNameCache(web_client)
         formatted_history = build_channel_transcript(web_client, channel_id, name_cache=name_cache)
 
-        draft = generate_sales_reply_ai(formatted_history)
+        draft = generate_sales_reply_ai(formatted_history, raw_draft=raw_draft)
 
         updated_view = {
             "type": "modal",
@@ -615,6 +663,7 @@ def generate_chat_summary_ai(chat_history: str) -> str:
         if not chat_history.strip():
             return "• *Status:* No customer messages found in this channel yet."
 
+        logging.info(f"📜 [AI CONTEXT] Conversation sent to Gemini for deal summary:\n{chat_history}")
         prompt = (
             "You are an elite Sales Operations Lead reviewing an active WhatsApp/Telegram conversation.\n"
             "Below is the conversation history with the prospect/client.\n\n"
@@ -704,8 +753,11 @@ def handle_slack_block_actions(client: SocketModeClient, req, web_client: WebCli
     if payload.get("type") != "block_actions":
         return
 
-    # Immediately acknowledge the interaction (< 5ms)
-    client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
+    # Immediately acknowledge the interaction (< 5ms) to satisfy Slack timeout
+    try:
+        client.send_socket_mode_response({"envelope_id": req.envelope_id})
+    except Exception as ack_err:
+        logging.warning(f"Could not ack block action: {ack_err}")
 
     user = payload.get("user", {})
     user_id = user.get("id")
@@ -945,4 +997,5 @@ def process_socket_mode_events():
         logging.error(f"Socket Mode connection failed: {e}", exc_info=True)
 
 if __name__ == "__main__":
+    critical_alerts.install_excepthook("slack_manager")
     process_socket_mode_events()

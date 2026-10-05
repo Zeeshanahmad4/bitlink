@@ -8,7 +8,9 @@ from flask import Flask, request, jsonify, render_template, session
 from dotenv import load_dotenv
 load_dotenv()
 
+import db
 import db_store
+import critical_alerts as alerts
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,6 +20,7 @@ logging.basicConfig(
 
 from datetime import timedelta
 import uuid
+from typing import Any, Dict, Optional
 
 # Data access lives in db_store, which is PostgreSQL-only. There is no fallback
 # store, so a database outage surfaces to the client as a 500 rather than
@@ -48,20 +51,19 @@ def index():
 
 # --- Authentication Endpoints ---
 
-def verify_credentials(username: str, password: str) -> bool:
+def verify_credentials(username: str, password: str) -> Optional[Dict[str, Any]]:
     """Verifies dashboard credentials against the bcrypt hashes in PostgreSQL.
 
-    db_store falls back to the legacy 'auth' worksheet and re-hashes on first
-    successful login, so existing accounts keep working through the migration.
+    Returns the account record (including its role) on success, None otherwise.
 
     The old hardcoded admin/admin bypass is gone. If credential lookup fails
     outright we deny the login rather than granting a default account.
     """
     try:
-        return db_store.verify_login(username.strip(), password.strip()) is not None
+        return db_store.verify_login(username.strip(), password.strip())
     except Exception as e:
         logging.error(f"Error checking credentials: {e}")
-        return False
+        return None
 
 
 @app.route('/api/auth/login', methods=['POST'])
@@ -73,13 +75,18 @@ def auth_login():
     if not username or not password:
         return jsonify({"success": False, "error": "Username and password are required."}), 400
 
-    if verify_credentials(username, password):
+    account = verify_credentials(username, password)
+    if account:
         session.permanent = True
         session["authenticated"] = True
         session["user"] = username
+        # A session issued before the role column existed carries no role. That
+        # must read as non-admin, never as admin, so an upgrade cannot widen access.
+        session["role"] = account.get("role") or "sales"
         session["login_time"] = time.time()
-        logging.info(f"User '{username}' logged in successfully (valid for 24 hours).")
-        return jsonify({"success": True, "message": "Authentication successful.", "user": username})
+        logging.info(f"User '{username}' logged in as role '{session['role']}' (valid for 24 hours).")
+        return jsonify({"success": True, "message": "Authentication successful.",
+                        "user": username, "role": session["role"]})
     
     logging.warning(f"Failed login attempt for user '{username}'.")
     return jsonify({"success": False, "error": "Invalid username or password."}), 401
@@ -94,11 +101,31 @@ def auth_check():
         session.pop("authenticated", None)
         session.pop("user", None)
         session.pop("login_time", None)
+        session.pop("role", None)
         is_auth = False
         user = ""
+        role = "sales"
     else:
         user = session.get("user", "")
-    return jsonify({"authenticated": is_auth, "user": user})
+        role = session.get("role", "sales") or "sales"
+    return jsonify({"authenticated": is_auth, "user": user, "role": role})
+
+
+def is_admin() -> bool:
+    """True only for an explicitly admin session.
+
+    A missing or unrecognised role is non-admin. Never widen this default: the
+    Developers page exposes technical detail and channel credentials.
+    """
+    return session.get("authenticated", False) is True and session.get("role") == "admin"
+
+
+def require_admin() -> Optional[Any]:
+    """Guard for every admin-only endpoint. Returns a 403 response or None."""
+    if is_admin():
+        return None
+    return jsonify({"success": False,
+                    "error": "This area is restricted to administrator accounts."}), 403
 
 
 @app.route('/api/auth/logout', methods=['POST'])
@@ -143,9 +170,14 @@ def get_system_health():
     bridges = {}
 
     # WhatsApp Node Gateway (3101)
+    # The gateway answers HTTP 200 even when logged out, reporting
+    # {"status": "not_ready"}. Judging it on the status code alone marked a dead
+    # WhatsApp session as ONLINE, so the body is checked as well.
     try:
         r = requests.get("http://127.0.0.1:3101/health", timeout=1.0)
-        bridges["whatsapp_gateway"] = {"online": r.status_code == 200, "details": r.json() if r.status_code == 200 else {}}
+        details = r.json() if r.status_code == 200 else {}
+        ready = str(details.get("status", "")).lower() == "ready"
+        bridges["whatsapp_gateway"] = {"online": r.status_code == 200 and ready, "details": details}
     except Exception:
         bridges["whatsapp_gateway"] = {"online": False}
 
@@ -169,6 +201,19 @@ def get_system_health():
         bridges["telegram_bridge"] = {"online": r.status_code == 200, "details": r.json() if r.status_code == 200 else {}}
     except Exception:
         bridges["telegram_bridge"] = {"online": False}
+
+    # Discord Python Bridge (8102) — previously unmonitored entirely
+    try:
+        r = requests.get("http://127.0.0.1:8102/health", timeout=1.0)
+        bridges["discord_bridge"] = {"online": r.status_code == 200, "details": r.json() if r.status_code == 200 else {}}
+    except Exception:
+        bridges["discord_bridge"] = {"online": False}
+
+    # PostgreSQL — a dashboard that cannot reach its own store is not healthy
+    try:
+        bridges["postgres"] = {"online": db.is_available()}
+    except Exception:
+        bridges["postgres"] = {"online": False}
 
     return jsonify({"status": "ok", "bridges": bridges, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")})
 
@@ -198,76 +243,66 @@ def list_delivery_mappings():
 
 @app.route('/api/delivery/mappings', methods=['POST'])
 def add_delivery_mapping():
-    """Adds a new delivery client mapping."""
+    """Adds a new delivery client mapping by auto-provisioning a new private Slack channel."""
     data = request.get_json(force=True)
     client_name = data.get("client_name", "").strip()
     platform = data.get("platform", "WhatsApp").strip()
     external_id = data.get("external_id", "").strip()
-    slack_channel_id = data.get("slack_channel_id", "").strip()
     slack_channel_name = data.get("slack_channel_name", "").strip()
     paused = bool(data.get("paused"))
 
     if not client_name or not external_id:
         return jsonify({"success": False, "error": "Missing required fields: client_name, external_id"}), 400
-        
-    if not slack_channel_id and not slack_channel_name:
-        return jsonify({"success": False, "error": "Must provide either a New Channel Name or an Existing Channel ID."}), 400
 
-    if not slack_channel_id:
-        try:
-            from slack_sdk import WebClient
-            import re
-            
-            # Use appropriate token based on platform
-            bot_token = os.getenv("SLACK_BOT_TOKEN") if platform.lower() == "whatsapp" else os.getenv("SLACK_BOT_TOKEN_TELEGRAM", os.getenv("SLACK_BOT_TOKEN"))
-            wc = WebClient(token=bot_token)
-            
-            if slack_channel_name:
-                ch_name = re.sub(r"[^a-z0-9-]", "", slack_channel_name.lower())
-            else:
-                # Generate channel slug fallback: del-client-1234
-                clean_name = re.sub(r"[^a-zA-Z0-9\s-]", "", client_name).strip().lower()
-                slug = re.sub(r"[\s_]+", "-", clean_name)[:15]
-                if not slug: 
-                    slug = external_id[-4:] if len(external_id) >= 4 else "client"
-                ch_name = f"del-{slug}-{external_id[-4:]}"
-            
-            logging.info(f"Auto-provisioning delivery channel: {ch_name} (Private)")
-            response = wc.conversations_create(name=ch_name, is_private=True)
-            slack_channel_id = response["channel"]["id"]
-            provisioned_channel_id = slack_channel_id
-            
-            # Auto-invite Manager Bot and Project Managers
-            master_bot = os.getenv("MASTER_SLACK_BOT_ID")
-            users_to_invite = []
-            if master_bot: users_to_invite.append(master_bot)
-
-            try:
-                for rec in db_store.get_project_managers():
-                    if rec.get("active") and rec.get("slack_user_id"):
-                        users_to_invite.append(str(rec["slack_user_id"]).strip())
-            except Exception as e:
-                logging.warning(f"Failed to fetch project managers: {e}")
-
-            # If no PMs found, fallback to ENV var just in case
-            if len(users_to_invite) == (1 if master_bot else 0):
-                pm_env = os.getenv("PROJECT_MANAGER_SLACK_ID")
-                if pm_env: users_to_invite.append(pm_env)
-            
-            # Remove duplicates
-            users_to_invite = list(set(users_to_invite))
-            
-            if users_to_invite:
-                try:
-                    wc.conversations_invite(channel=slack_channel_id, users=",".join(users_to_invite))
-                except Exception as e:
-                    logging.warning(f"Failed to auto-invite users {users_to_invite} to delivery channel: {e}")
-        except Exception as e:
-            return jsonify({"success": False, "error": f"Failed to auto-provision channel: {e}"}), 500
-
-    # Set when this request provisioned a fresh Slack channel, so a failed
-    # database write does not leave an orphaned channel behind.
     provisioned_channel_id = None
+    try:
+        from slack_sdk import WebClient
+        import re
+
+        # Use appropriate token based on platform
+        bot_token = os.getenv("SLACK_BOT_TOKEN") if platform.lower() == "whatsapp" else os.getenv("SLACK_BOT_TOKEN_TELEGRAM", os.getenv("SLACK_BOT_TOKEN"))
+        wc = WebClient(token=bot_token)
+
+        if slack_channel_name:
+            ch_name = re.sub(r"[^a-z0-9-]", "", slack_channel_name.lower())
+        else:
+            # Generate channel slug fallback: del-client-1234
+            clean_name = re.sub(r"[^a-zA-Z0-9\s-]", "", client_name).strip().lower()
+            slug = re.sub(r"[\s_]+", "-", clean_name)[:15]
+            if not slug:
+                slug = external_id[-4:] if len(external_id) >= 4 else "client"
+            ch_name = f"del-{slug}-{external_id[-4:]}"
+
+        logging.info(f"Auto-provisioning delivery channel: {ch_name} (Private)")
+        response = wc.conversations_create(name=ch_name, is_private=True)
+        slack_channel_id = response["channel"]["id"]
+        provisioned_channel_id = slack_channel_id
+
+        # Auto-invite Manager Bot and Project Managers
+        master_bot = os.getenv("MASTER_SLACK_BOT_ID")
+        users_to_invite = []
+        if master_bot: users_to_invite.append(master_bot)
+
+        try:
+            for rec in db_store.get_project_managers():
+                if rec.get("active") and rec.get("slack_user_id"):
+                    users_to_invite.append(str(rec["slack_user_id"]).strip())
+        except Exception as e:
+            logging.warning(f"Failed to fetch project managers: {e}")
+
+        # If no PMs found, fallback to ENV var just in case
+        if len(users_to_invite) == (1 if master_bot else 0):
+            pm_env = os.getenv("PROJECT_MANAGER_SLACK_ID")
+            if pm_env: users_to_invite.append(pm_env)
+
+        users_to_invite = list(set(users_to_invite))
+        if users_to_invite:
+            try:
+                wc.conversations_invite(channel=slack_channel_id, users=",".join(users_to_invite))
+            except Exception as e:
+                logging.warning(f"Failed to auto-invite users {users_to_invite} to delivery channel: {e}")
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to auto-provision channel: {e}"}), 500
 
     try:
         # 1. Idempotency check
@@ -279,49 +314,125 @@ def add_delivery_mapping():
         db_store.add_client_mapping(platform, client_name, external_id,
                                     slack_channel_id, paused)
 
-        # 2. Auto-pause the matching sales lead
+        # 2. Auto-pause the matching sales lead and lock it as handed over
+        sales_lead_id = data.get("sales_lead_id") or data.get("salesRowToPause")
+        if sales_lead_id:
+            try:
+                db_store.update_sales_lead(int(sales_lead_id), {"paused": True, "delivery_handed_off": True})
+            except Exception as e:
+                logging.error(f"Failed to auto-pause sales lead by id {sales_lead_id}: {e}")
+
         try:
-            db_store.update_sales_lead_by_external_id(external_id, {"paused": True})
+            db_store.update_sales_lead_by_external_id(external_id, {"paused": True, "delivery_handed_off": True})
         except Exception as e:
-            logging.error(f"Failed to auto-pause sales lead: {e}")
+            logging.error(f"Failed to auto-pause sales lead by external_id {external_id}: {e}")
 
         dispatch_bridge_refresh()
         logging.info(f"Created delivery mapping: {client_name} ({external_id}) -> {slack_channel_id}")
-        return jsonify({"success": True, "message": "Delivery mapping created successfully."}), 201
+        return jsonify({"success": True, "message": "Delivery mapping created successfully.", "slack_channel_id": slack_channel_id}), 201
     except Exception as e:
         logging.error(f"Error adding delivery mapping: {e}")
         if provisioned_channel_id:
-            # Best effort: don't leave a channel that maps to no client.
             try:
                 from slack_sdk import WebClient as _WC
                 bot_token = os.getenv("SLACK_BOT_TOKEN") if platform.lower() == "whatsapp" \
                     else os.getenv("SLACK_BOT_TOKEN_TELEGRAM", os.getenv("SLACK_BOT_TOKEN"))
                 _WC(token=bot_token).conversations_archive(channel=provisioned_channel_id)
-                logging.warning(f"Archived orphaned Slack channel {provisioned_channel_id} "
-                                f"after the mapping failed to save.")
+                logging.warning(f"Archived orphaned Slack channel {provisioned_channel_id} after the mapping failed to save.")
             except Exception as e2:
-                logging.error(f"Could not archive orphaned channel "
-                              f"{provisioned_channel_id}: {e2}")
+                logging.error(f"Could not archive orphaned channel {provisioned_channel_id}: {e2}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route('/api/delivery/mappings/<int:row_idx>', methods=['PUT'])
 def update_delivery_mapping(row_idx: int):
-    """Updates an existing delivery client mapping. row_idx is the stable id."""
+    """Updates an existing delivery client mapping. If slack_channel_name is provided, creates a new channel and pauses old."""
     data = request.get_json(force=True)
     try:
         current = db_store.get_client_mapping_by_id(row_idx)
         if not current:
             return jsonify({"success": False, "error": f"Mapping {row_idx} not found"}), 404
 
+        client_name = data.get("client_name", current.get("client_name", "")).strip()
+        platform = data.get("platform", current.get("platform", "WhatsApp")).strip()
+        external_id = data.get("external_id", current.get("external_id", "")).strip()
+        old_channel_id = current.get("slack_channel_id", "")
+        new_channel_name = (data.get("slack_channel_name") or "").strip()
+
         fields = {
-            "client_name": data.get("client_name", current.get("client_name", "")),
-            "platform": data.get("platform", current.get("platform", "WhatsApp")),
-            "external_id": data.get("external_id", current.get("external_id", "")),
-            "slack_channel_id": data.get("slack_channel_id", current.get("slack_channel_id", "")),
+            "client_name": client_name,
+            "platform": platform,
+            "external_id": external_id,
+            "slack_channel_id": old_channel_id,
         }
         if "paused" in data:
             fields["paused"] = bool(data["paused"])
+
+        # If a new channel name was entered, provision the new channel and pause the old one
+        if new_channel_name:
+            from slack_sdk import WebClient
+            import re
+
+            bot_token = os.getenv("SLACK_BOT_TOKEN") if platform.lower() == "whatsapp" else os.getenv("SLACK_BOT_TOKEN_TELEGRAM", os.getenv("SLACK_BOT_TOKEN"))
+            wc = WebClient(token=bot_token)
+
+            ch_name = re.sub(r"[^a-z0-9-]", "", new_channel_name.lower())
+            if not ch_name:
+                clean_name = re.sub(r"[^a-zA-Z0-9\s-]", "", client_name).strip().lower()
+                slug = re.sub(r"[\s_]+", "-", clean_name)[:15]
+                if not slug:
+                    slug = external_id[-4:] if len(external_id) >= 4 else "client"
+                ch_name = f"del-{slug}-{external_id[-4:]}"
+
+            logging.info(f"Auto-provisioning new delivery channel for {client_name}: {ch_name} (Private)")
+            try:
+                response = wc.conversations_create(name=ch_name, is_private=True)
+                new_channel_id = response["channel"]["id"]
+            except Exception as e:
+                logging.error(f"Failed to create new Slack channel '{ch_name}': {e}")
+                return jsonify({"success": False, "error": f"Failed to create new Slack channel: {e}"}), 500
+
+            # Auto-invite Master Bot and Project Managers
+            master_bot = os.getenv("MASTER_SLACK_BOT_ID")
+            users_to_invite = []
+            if master_bot: users_to_invite.append(master_bot)
+            try:
+                for rec in db_store.get_project_managers():
+                    if rec.get("active") and rec.get("slack_user_id"):
+                        users_to_invite.append(str(rec["slack_user_id"]).strip())
+            except Exception as e:
+                logging.warning(f"Failed to fetch project managers: {e}")
+
+            if len(users_to_invite) == (1 if master_bot else 0):
+                pm_env = os.getenv("PROJECT_MANAGER_SLACK_ID")
+                if pm_env: users_to_invite.append(pm_env)
+
+            users_to_invite = list(set(users_to_invite))
+            if users_to_invite:
+                try:
+                    wc.conversations_invite(channel=new_channel_id, users=",".join(users_to_invite))
+                except Exception as e:
+                    logging.warning(f"Failed to auto-invite users to new channel: {e}")
+
+            # Notify old channel and keep old channel registered as paused
+            if old_channel_id and old_channel_id != new_channel_id:
+                try:
+                    wc.chat_postMessage(
+                        channel=old_channel_id,
+                        text=f"*Info:* Delivery communication for *{client_name}* has been moved to <#{new_channel_id}>. This channel is now paused and all communication will take place in the new channel.",
+                        username="Bitlink Bridge Info"
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to post migration notice to old channel {old_channel_id}: {e}")
+
+                # Save old channel in client_mappings with paused=True so the bridges continue to block it
+                try:
+                    db_store.add_client_mapping(platform, client_name, external_id, old_channel_id, paused=True)
+                except Exception as e:
+                    logging.warning(f"Failed to record old channel as paused in client_mappings: {e}")
+
+            fields["slack_channel_id"] = new_channel_id
+            fields["paused"] = False
 
         ok = db_store.update_client_mapping(row_idx, fields)
         if not ok:
@@ -329,7 +440,12 @@ def update_delivery_mapping(row_idx: int):
 
         dispatch_bridge_refresh()
         logging.info(f"Updated delivery mapping {row_idx}: {fields.get('client_name')}")
-        return jsonify({"success": True, "message": f"Mapping {row_idx} updated successfully."})
+        return jsonify({
+            "success": True,
+            "message": f"Mapping {row_idx} updated successfully." + (f" New channel <#{fields['slack_channel_id']}> created and old channel paused." if new_channel_name else ""),
+            "slack_channel_id": fields["slack_channel_id"],
+            "paused": fields.get("paused", False)
+        })
     except Exception as e:
         logging.error(f"Error updating delivery mapping {row_idx}: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
@@ -454,15 +570,16 @@ def update_sales_lead(external_id: str):
             }), 400
         lead_id = lead["id"]
 
-        # Safeguard: Prevent resuming sales channel if delivery channel is still active
+        # Safeguard: Prevent resuming sales channel if client was handed over to delivery
         if "paused" in data and not data["paused"]:
-            for d_rec in db_store.list_all_client_mappings():
-                if str(d_rec.get("external_id", "")).strip() == clean_ext_id:
-                    if not bool(d_rec.get("paused")):
-                        return jsonify({
-                            "success": False,
-                            "error": "Cannot resume Sales Channel while Delivery Channel is still active. Please pause the client in the Delivery team first."
-                        }), 403
+            is_handed_off = bool(lead.get("delivery_handed_off"))
+            if not is_handed_off:
+                is_handed_off = db_store.is_client_in_delivery(clean_ext_id)
+            if is_handed_off:
+                return jsonify({
+                    "success": False,
+                    "error": "Channel cannot be resumed: Client has been handed over to delivery."
+                }), 400
 
         # If stage is changed to won or lost, automatically record closed_at timestamp
         if data.get("stage") in ["won", "lost"]:
@@ -613,6 +730,30 @@ def update_settings():
                                       "current": current.get(key)})
                     continue
             str_val = "TRUE" if val is True else ("FALSE" if val is False else str(val))
+            # Validate numeric settings before writing
+            if key == "archive_after_days":
+                try:
+                    n = int(float(str(val)))
+                    if n < 1:
+                        return jsonify({"success": False,
+                                        "error": "Auto-archive threshold must be at least 1 day."}), 400
+                    if n > 365:
+                        return jsonify({"success": False,
+                                        "error": "Auto-archive threshold cannot exceed 365 days."}), 400
+                    str_val = str(n)
+                except (ValueError, TypeError):
+                    return jsonify({"success": False,
+                                    "error": "Auto-archive threshold must be a whole number."}), 400
+            if key == "sla_minutes":
+                try:
+                    n = int(float(str(val)))
+                    if n < 1:
+                        return jsonify({"success": False,
+                                        "error": "SLA warning must be at least 1 minute."}), 400
+                    str_val = str(n)
+                except (ValueError, TypeError):
+                    return jsonify({"success": False,
+                                    "error": "SLA minutes must be a whole number."}), 400
             if not db_store.set_setting(key, str_val, note):
                 failed.append(key)
             else:
@@ -785,9 +926,916 @@ def trigger_weekly_stage_api():
 
 
 # ==============================================================================
+# 5. DEVELOPERS API (admin only)
+#
+# Two rosters are managed separately on purpose. project_managers are the
+# oversight people auto-invited into client channels; developers are the people
+# who receive technical failures. An operator may appear in one, the other, or
+# both, so neither table is derived from the other.
+# ==============================================================================
+
+def _roster_payload(rows) -> Dict[str, Any]:
+    return {"success": True, "data": [{
+        "row_idx": r["id"],
+        "slack_user_id": str(r.get("slack_user_id", "")),
+        "name": str(r.get("name", "")),
+        "active": bool(r.get("active")),
+        "channel_ids": r.get("channel_ids", [])
+    } for r in rows]}
+
+
+def _read_roster(table: str):
+    if table == "project_managers":
+        return db_store.list_project_managers()
+    return db_store.list_developers()
+
+
+def _sync_error_channel_if_developers(channel_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Push roster changes into the error channel(s), best effort."""
+    if channel_id:
+        try:
+            return alerts.sync_channel_membership(channel_id=channel_id)
+        except Exception as e:
+            logging.error(f"Error channel membership sync failed for {channel_id}: {e}")
+            return {"posted": False, "reason": str(e)}
+
+    channel_ids = alerts.error_channel_ids()
+    if not channel_ids:
+        return {"posted": False, "reason": "no_channel"}
+    results = []
+    for cid in channel_ids:
+        try:
+            results.append(alerts.sync_channel_membership(channel_id=cid))
+        except Exception as e:
+            logging.error(f"Error channel membership sync failed for {cid}: {e}")
+            results.append({"ok": False, "channel_id": cid, "error": str(e)})
+    return {"ok": True, "results": results}
+
+
+@app.route('/api/developers/project-managers', methods=['GET'])
+def list_project_managers():
+    denied = require_admin()
+    if denied:
+        return denied
+    try:
+        payload = _roster_payload(db_store.list_project_managers())
+        payload["count"] = len(payload["data"])
+        return jsonify(payload)
+    except Exception as e:
+        logging.error(f"Error fetching project managers: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/developers/roster', methods=['GET'])
+def list_error_channel_developers():
+    denied = require_admin()
+    if denied:
+        return denied
+    try:
+        payload = _roster_payload(db_store.list_developers())
+        payload["count"] = len(payload["data"])
+        return jsonify(payload)
+    except Exception as e:
+        logging.error(f"Error fetching developer roster: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+def _validate_slack_id_or_return(slack_user_id: str):
+    """Verify a Slack ID resolves to a real user before storing it.
+
+    Returns (None, (response, status)) on failure and (record, None) on success.
+    A stale ID left in a roster is the failure mode this prevents: it silently
+    degrades channel membership with no feedback at the time of the mistake.
+    """
+    check = alerts.validate_slack_user(None, slack_user_id)
+    if check.get("ok"):
+        return check, None
+    if check.get("skipped"):
+        return {"slack_user_id": slack_user_id}, None
+    return None, (jsonify({"success": False,
+                           "error": f"Slack does not recognise that user ID: {check.get('error')}"}), 400)
+
+
+def _add_roster_member(table: str, label: str):
+    denied = require_admin()
+    if denied:
+        return denied
+    data = request.get_json(force=True)
+    slack_user_id = str(data.get("slack_user_id", "")).strip()
+    name = str(data.get("name", "")).strip()
+    active = bool(data.get("active", True))
+    selected_channel_ids = data.get("channel_ids")
+    if not slack_user_id:
+        return jsonify({"success": False, "error": "Missing slack_user_id"}), 400
+
+    check, failure = _validate_slack_id_or_return(slack_user_id)
+    if failure:
+        return failure
+    if not name:
+        name = check.get("name") or slack_user_id
+
+    try:
+        db_store.add_person(table, slack_user_id, name, active)
+    except Exception as e:
+        detail = str(e)
+        lowered = detail.lower()
+        if "unique" in lowered or "duplicate" in lowered:
+            return jsonify({"success": False,
+                            "error": "That Slack ID is already on this list."}), 409
+        logging.error(f"Error adding to {table}: {e}")
+        return jsonify({"success": False, "error": detail}), 500
+
+    sync = None
+    warning = None
+    if table == "developers":
+        if selected_channel_ids is None or len(selected_channel_ids) == 0:
+            active_channels = db_store.list_alert_channels(active_only=True)
+            selected_channel_ids = [c["channel_id"] for c in active_channels]
+            if not selected_channel_ids:
+                single = alerts.error_channel_id()
+                if single:
+                    selected_channel_ids = [single]
+        db_store.set_developer_channels(slack_user_id, selected_channel_ids)
+
+        sync_results = []
+        for cid in selected_channel_ids:
+            res = alerts.sync_channel_membership(channel_id=cid)
+            sync_results.append(res)
+            if res.get("skipped"):
+                for sk in res.get("skipped", []):
+                    if sk.get("user_id") == slack_user_id:
+                        warning = f"Added to list, but Slack invite to channel {cid} failed: {sk.get('error')}"
+                        break
+        sync = {"ok": True, "results": sync_results}
+
+    logging.info(f"Added {label}: {name} ({slack_user_id}) active={active}")
+    return jsonify({"success": True, "message": warning or f"{name} added.", "warning": warning, "sync": sync}), 201
+
+
+def _update_roster_member(table: str, row_idx: int, label: str):
+    denied = require_admin()
+    if denied:
+        return denied
+    data = request.get_json(force=True)
+    try:
+        current = next((r for r in _read_roster(table) if r["id"] == row_idx), None)
+        if not current:
+            return jsonify({"success": False, "error": f"Row {row_idx} not found"}), 404
+
+        old_slack_id = str(current.get("slack_user_id", "")).strip()
+        slack_user_id = str(data.get("slack_user_id", old_slack_id)).strip()
+        name = str(data.get("name", current.get("name", "")))
+        active = bool(data["active"]) if "active" in data else bool(current.get("active"))
+
+        if slack_user_id != old_slack_id:
+            check, failure = _validate_slack_id_or_return(slack_user_id)
+            if failure:
+                return failure
+            if not name:
+                name = check.get("name") or slack_user_id
+            if table == "developers" and old_slack_id:
+                for cid in alerts.error_channel_ids():
+                    try:
+                        alerts.kick_from_error_channel(old_slack_id, channel_id=cid)
+                    except Exception as e:
+                        logging.warning(f"Failed to kick previous Slack user {old_slack_id} from {cid}: {e}")
+
+        if not db_store.update_person(table, row_idx, slack_user_id, name, active):
+            return jsonify({"success": False, "error": f"Row {row_idx} not found"}), 404
+
+        if table == "developers":
+            if "channel_ids" in data:
+                db_store.set_developer_channels(slack_user_id, data["channel_ids"])
+
+        kicks = []
+        if table == "developers" and not active and slack_user_id:
+            for cid in alerts.error_channel_ids():
+                try:
+                    k = alerts.kick_from_error_channel(slack_user_id, channel_id=cid)
+                    kicks.append(k)
+                except Exception as e:
+                    logging.warning(f"Failed to kick deactivated developer {slack_user_id} from {cid}: {e}")
+        elif table == "developers" and active and slack_user_id:
+            assigned = db_store.get_developer_channel_ids(slack_user_id)
+            for cid in assigned:
+                alerts.sync_channel_membership(channel_id=cid)
+
+        sync = _sync_error_channel_if_developers() if table == "developers" else None
+        logging.info(f"Updated {label} {row_idx}: {name} active={active}")
+
+        msg = "Saved."
+        if table == "developers":
+            if not active:
+                msg = f"{name} deactivated and excluded from alert channels."
+            else:
+                msg = f"{name} updated and synced to alert channels."
+
+        return jsonify({"success": True, "message": msg, "kicks": kicks, "sync": sync})
+    except Exception as e:
+        logging.error(f"Error updating {table} {row_idx}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+def _delete_roster_member(table: str, row_idx: int, label: str):
+    denied = require_admin()
+    if denied:
+        return denied
+    try:
+        current = next((r for r in _read_roster(table) if r["id"] == row_idx), None)
+        if not current:
+            return jsonify({"success": False, "error": f"Row {row_idx} not found"}), 404
+        slack_user_id = str(current.get("slack_user_id", "")).strip()
+        name = str(current.get("name", "Member"))
+
+        if not db_store.delete_person(table, row_idx):
+            return jsonify({"success": False, "error": f"Row {row_idx} not found"}), 404
+
+        kicks = []
+        if table == "developers" and slack_user_id:
+            # Exclude developer from ALL currently present alert channels!
+            all_channels = db_store.list_alert_channels()
+            channel_ids = [c["channel_id"] for c in all_channels]
+            single = alerts.error_channel_id()
+            if single and single not in channel_ids:
+                channel_ids.append(single)
+            for cid in channel_ids:
+                try:
+                    k = alerts.kick_from_error_channel(slack_user_id, channel_id=cid)
+                    kicks.append(k)
+                except Exception as e:
+                    logging.warning(f"Failed to kick deleted developer {slack_user_id} from {cid}: {e}")
+            db_store.set_developer_channels(slack_user_id, [])
+
+        logging.info(f"Deleted {label} {row_idx} ({name}, {slack_user_id})")
+
+        msg = "Removed."
+        if table == "developers":
+            msg = f"{name} removed from roster and excluded from all alert channels."
+
+        return jsonify({"success": True, "message": msg, "kicks": kicks})
+    except Exception as e:
+        logging.error(f"Error deleting from {table} {row_idx}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/developers/project-managers', methods=['POST'])
+def add_project_manager():
+    return _add_roster_member("project_managers", "project manager")
+
+
+@app.route('/api/developers/project-managers/<int:row_idx>', methods=['PUT'])
+def update_project_manager(row_idx: int):
+    return _update_roster_member("project_managers", row_idx, "project manager")
+
+
+@app.route('/api/developers/project-managers/<int:row_idx>', methods=['DELETE'])
+def delete_project_manager(row_idx: int):
+    return _delete_roster_member("project_managers", row_idx, "project manager")
+
+
+@app.route('/api/developers/roster', methods=['POST'])
+def add_error_channel_developer():
+    return _add_roster_member("developers", "developer")
+
+
+@app.route('/api/developers/roster/<int:row_idx>', methods=['PUT'])
+def update_error_channel_developer(row_idx: int):
+    return _update_roster_member("developers", row_idx, "developer")
+
+
+@app.route('/api/developers/roster/<int:row_idx>', methods=['DELETE'])
+def delete_error_channel_developer(row_idx: int):
+    return _delete_roster_member("developers", row_idx, "developer")
+
+
+@app.route('/api/developers/admins', methods=['GET'])
+def list_admins():
+    denied = require_admin()
+    if denied:
+        return denied
+    try:
+        user_ids = db_store.get_admin_user_ids()
+        return jsonify({"success": True, "data": user_ids, "count": len(user_ids)})
+    except Exception as e:
+        logging.error(f"Error fetching admins: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/developers/error-channel', methods=['GET'])
+def get_error_channel():
+    denied = require_admin()
+    if denied:
+        return denied
+    channel_id = alerts.error_channel_id()
+    out: Dict[str, Any] = {"success": True, "channel_id": channel_id, "configured": bool(channel_id),
+                           "slack_configured": alerts.get_client() is not None}
+    if channel_id:
+        client = alerts.get_client()
+        if client is not None:
+            try:
+                info = client.conversations_info(channel=channel_id)
+                ch = info.get("channel", {}) or {}
+                out["channel_name"] = ch.get("name", "")
+                out["is_archived"] = bool(ch.get("is_archived", False))
+                members = client.conversations_members(channel=channel_id)
+                out["member_count"] = len(members.get("members", []) or [])
+            except Exception as e:
+                # A token without conversations:read cannot resolve the channel.
+                # That is a scope gap, not a broken configuration, so say which.
+                out["channel_resolve_error"] = str(e)
+    return jsonify(out)
+
+
+@app.route('/api/developers/error-channel', methods=['POST'])
+def set_error_channel():
+    denied = require_admin()
+    if denied:
+        return denied
+    data = request.get_json(force=True)
+    channel_id = str(data.get("channel_id", "")).strip()
+    if not channel_id:
+        return jsonify({"success": False, "error": "A channel ID is required."}), 400
+    if not (channel_id.startswith("C") or channel_id.startswith("G")):
+        return jsonify({"success": False,
+                        "error": "A Slack channel ID starts with C (channel) or G (group)."}), 400
+
+    client = alerts.get_client()
+    if client is not None:
+        try:
+            info = client.conversations_info(channel=channel_id)
+            resolved = (info.get("channel", {}) or {}).get("name", channel_id)
+        except Exception as e:
+            logging.error(f"Channel {channel_id} could not be resolved: {e}")
+            return jsonify({"success": False,
+                            "error": f"Slack cannot open that channel with this bot: {e}"}), 400
+    else:
+        resolved = channel_id
+
+    if not db_store.set_setting("critical_alerts_channel_id", channel_id,
+                               note="Set from the Developers page"):
+        return jsonify({"success": False, "error": "Could not save the channel ID."}), 500
+
+    sync = alerts.sync_channel_membership(channel_id=channel_id)
+    alerts.reset_state()
+    logging.info(f"Error channel set to {channel_id} (#{resolved}) by {session.get('user')}")
+    return jsonify({"success": True, "message": f"Alerts will now go to #{resolved}.",
+                    "channel_name": resolved, "sync": sync})
+
+
+@app.route('/api/developers/error-channel/create', methods=['POST'])
+def create_error_channel():
+    denied = require_admin()
+    if denied:
+        return denied
+    result = alerts.create_error_channel()
+    if not result.get("ok"):
+        logging.warning(f"Error channel creation failed: {result}")
+        return jsonify({"success": False, "error": result.get("error", "unknown"),
+                        "detail": result.get("detail", "")}), 400
+    alerts.reset_state()
+    logging.info(f"Error channel {result['channel_name']} created by {session.get('user')}")
+    return jsonify({"success": True, "message": f"Created #{result['channel_name']}.",
+                    "channel_id": result["channel_id"], "sync": result.get("membership")})
+
+
+@app.route('/api/developers/error-channel/sync', methods=['POST'])
+def sync_error_channel():
+    denied = require_admin()
+    if denied:
+        return denied
+    channel_id = alerts.error_channel_id()
+    if not channel_id:
+        return jsonify({"success": False,
+                        "error": "No error channel is set. Choose one first."}), 400
+    result = alerts.sync_channel_membership(channel_id=channel_id)
+    if not result.get("ok"):
+        return jsonify({"success": False, "error": result.get("reason", "sync failed")}), 400
+    if result.get("skipped"):
+        logging.warning(f"Channel sync skipped IDs: {result['skipped']}")
+    return jsonify({"success": True, "message": "Channel membership refreshed.", "sync": result})
+
+
+# ---------------------------------------------------------------------------
+# Multi Alert Channels Management
+# ---------------------------------------------------------------------------
+
+@app.route('/api/developers/alert-channels', methods=['GET'])
+def list_alert_channels_route():
+    denied = require_admin()
+    if denied:
+        return denied
+    channels = db_store.list_alert_channels()
+    client = alerts.get_client()
+    for ch in channels:
+        cid = ch["channel_id"]
+        ch["is_archived"] = False
+        ch["is_private"] = False
+        ch["member_count"] = 0
+        if client is not None:
+            try:
+                info = client.conversations_info(channel=cid)
+                c_data = info.get("channel", {}) or {}
+                ch["is_archived"] = bool(c_data.get("is_archived", False))
+                ch["is_private"] = bool(c_data.get("is_private", False))
+                name = c_data.get("name")
+                if name:
+                    ch["channel_name"] = name
+                members = client.conversations_members(channel=cid)
+                ch["member_count"] = len(members.get("members", []) or [])
+            except Exception as e:
+                ch["error"] = str(e)
+    return jsonify({"success": True, "channels": channels})
+
+
+@app.route('/api/developers/alert-channels', methods=['POST'])
+def add_alert_channel_route():
+    denied = require_admin()
+    if denied:
+        return denied
+    data = request.get_json(force=True)
+    raw_name = str(data.get("channel_name", "")).strip().lstrip("#")
+    channel_id = str(data.get("channel_id", "")).strip()
+
+    client = alerts.get_client()
+    channel_name = raw_name
+
+    # If channel_id is not provided, create a new channel in Slack
+    if not channel_id:
+        if not channel_name:
+            return jsonify({"success": False, "error": "A channel name or channel ID is required."}), 400
+        if client is None:
+            return jsonify({"success": False, "error": "Slack is not configured on this server."}), 400
+        create_res = alerts.create_public_channel(name=channel_name, client=client)
+        if not create_res.get("ok"):
+            err_msg = create_res.get("detail") or create_res.get("error") or "Failed to create channel in Slack."
+            return jsonify({"success": False, "error": err_msg}), 400
+        channel_id = create_res.get("channel_id")
+        channel_name = create_res.get("channel_name", channel_name)
+
+    if not channel_id:
+        return jsonify({"success": False, "error": "Could not determine channel ID."}), 400
+
+    if client is not None:
+        try:
+            info = client.conversations_info(channel=channel_id)
+            ch = info.get("channel", {}) or {}
+            channel_name = ch.get("name", channel_name or channel_id)
+            if ch.get("is_archived"):
+                try:
+                    client.conversations_unarchive(channel=channel_id)
+                except Exception:
+                    pass
+        except Exception as e:
+            logging.warning(f"Could not verify channel {channel_id}: {e}")
+
+    try:
+        db_store.add_alert_channel(channel_id, channel_name, active=True)
+        db_store.set_setting("critical_alerts_channel_id", channel_id, note="Set from Alert Channels")
+    except Exception as e:
+        logging.error(f"Failed to save alert channel {channel_id}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+    sync = alerts.sync_channel_membership(channel_id=channel_id)
+    alerts.reset_state()
+    logging.info(f"Alert channel #{channel_name} ({channel_id}) added by {session.get('user')}")
+    return jsonify({"success": True, "message": f"Added #{channel_name} ({channel_id}).",
+                    "channel_id": channel_id, "channel_name": channel_name, "sync": sync}), 201
+
+
+@app.route('/api/developers/alert-channels/<channel_id>/sync', methods=['POST'])
+def sync_specific_alert_channel_route(channel_id: str):
+    denied = require_admin()
+    if denied:
+        return denied
+    result = alerts.sync_channel_membership(channel_id=channel_id)
+    return jsonify({"success": True, "message": f"Synced channel {channel_id}", "sync": result})
+
+
+@app.route('/api/developers/alert-channels/<channel_id>', methods=['DELETE'])
+def delete_alert_channel_route(channel_id: str):
+    denied = require_admin()
+    if denied:
+        return denied
+    try:
+        db_store.delete_alert_channel(channel_id)
+        alerts.reset_state()
+        logging.info(f"Alert channel {channel_id} removed by {session.get('user')}")
+        return jsonify({"success": True, "message": f"Alert channel {channel_id} removed."})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/developers/alerts', methods=['GET'])
+def list_technical_alerts():
+    """Full technical alerts, joined with the detail table. Admin only.
+
+    Sales reads /api/alerts, which selects no technical column at all.
+    """
+    denied = require_admin()
+    if denied:
+        return denied
+    try:
+        rows = db_store.get_alerts_with_detail(
+            severity=request.args.get("severity") or None,
+            component=request.args.get("component") or None,
+            status=request.args.get("status") or None,
+            category=request.args.get("category") or None,
+            limit=int(request.args.get("limit", 100)))
+        return jsonify({
+            "success": True,
+            "data": rows,
+            "alerts": rows,
+            "count": len(rows),
+            "open_count": db_store.open_alert_count()
+        })
+    except Exception as e:
+        logging.error(f"Error fetching technical alerts: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/developers/alerts/<int:alert_id>', methods=['GET'])
+def get_technical_alert(alert_id: int):
+    denied = require_admin()
+    if denied:
+        return denied
+    try:
+        row = db_store.get_alert_detail(alert_id)
+        if not row:
+            return jsonify({"success": False, "error": "Alert not found"}), 404
+        return jsonify({"success": True, "data": row})
+    except Exception as e:
+        logging.error(f"Error fetching alert {alert_id}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/developers/alerts/<int:alert_id>/resolve', methods=['POST'])
+def resolve_technical_alert(alert_id: int):
+    denied = require_admin()
+    if denied:
+        return denied
+    try:
+        if not db_store.resolve_alert(alert_id):
+            return jsonify({"success": False, "error": "Alert not found"}), 404
+        logging.info(f"Alert {alert_id} resolved by {session.get('user')}")
+        return jsonify({"success": True, "message": "Alert resolved."})
+    except Exception as e:
+        logging.error(f"Error resolving alert {alert_id}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ==============================================================================
+# DASHBOARD USERS API (Admin Only)
+# ==============================================================================
+
+@app.route('/api/users', methods=['GET'])
+def list_dashboard_users_route():
+    denied = require_admin()
+    if denied:
+        return denied
+    users = db_store.list_dashboard_users()
+    return jsonify({"success": True, "users": users, "count": len(users)})
+
+
+@app.route('/api/users', methods=['POST'])
+def add_dashboard_user_route():
+    denied = require_admin()
+    if denied:
+        return denied
+    data = request.get_json(force=True) if request.data else {}
+    username = str(data.get("username") or data.get("id") or "").strip()
+    password = str(data.get("password") or "").strip()
+    role = str(data.get("role") or "sales").strip().lower()
+
+    if not username:
+        return jsonify({"success": False, "error": "Username is required."}), 400
+    if not password:
+        return jsonify({"success": False, "error": "Password is required."}), 400
+    if role not in ("admin", "sales"):
+        return jsonify({"success": False, "error": "Role must be 'admin' or 'sales'."}), 400
+
+    res = db_store.create_dashboard_user(username, password, role)
+    if not res.get("ok"):
+        return jsonify({"success": False, "error": res.get("error") or "Failed to create user."}), 400
+
+    logging.info(f"Dashboard user '{username}' created with role '{role}' by '{session.get('user')}'")
+    return jsonify({"success": True, "message": f"User '{username}' created with role '{role}'.", "user": res}), 201
+
+
+@app.route('/api/users/<user_id>', methods=['PUT'])
+def update_dashboard_user_route(user_id: str):
+    denied = require_admin()
+    if denied:
+        return denied
+    data = request.get_json(force=True) if request.data else {}
+    target_user = str(user_id or "").strip()
+
+    # Check if role update requested
+    if "role" in data:
+        role = str(data.get("role") or "").strip().lower()
+        if role not in ("admin", "sales"):
+            return jsonify({"success": False, "error": "Role must be 'admin' or 'sales'."}), 400
+        if role != "admin":
+            admin_ids = db_store.get_admin_user_ids()
+            if target_user in admin_ids and len(admin_ids) <= 1:
+                return jsonify({"success": False, "error": "Cannot demote the only remaining admin."}), 400
+
+        res = db_store.update_dashboard_user_role(target_user, role)
+        if not res.get("ok"):
+            return jsonify({"success": False, "error": res.get("error")}), 400
+
+        if target_user == session.get("user"):
+            session["role"] = role
+
+        logging.info(f"Dashboard user '{target_user}' role updated to '{role}' by '{session.get('user')}'")
+        return jsonify({"success": True, "message": f"User '{target_user}' role updated to '{role}'."})
+
+    # Check if password update requested
+    if "password" in data:
+        password = str(data.get("password") or "").strip()
+        if not password:
+            return jsonify({"success": False, "error": "Password cannot be empty."}), 400
+        res = db_store.update_dashboard_user_password(target_user, password)
+        if not res.get("ok"):
+            return jsonify({"success": False, "error": res.get("error")}), 400
+
+        logging.info(f"Dashboard user '{target_user}' password updated by '{session.get('user')}'")
+        return jsonify({"success": True, "message": f"Password updated for '{target_user}'."})
+
+    return jsonify({"success": False, "error": "No updates specified."}), 400
+
+
+@app.route('/api/users/<user_id>', methods=['DELETE'])
+def delete_dashboard_user_route(user_id: str):
+    denied = require_admin()
+    if denied:
+        return denied
+    target_user = str(user_id or "").strip()
+
+    if target_user == session.get("user"):
+        return jsonify({"success": False, "error": "You cannot delete your own logged-in account."}), 400
+
+    admin_ids = db_store.get_admin_user_ids()
+    if target_user in admin_ids and len(admin_ids) <= 1:
+        return jsonify({"success": False, "error": "Cannot delete the only remaining admin."}), 400
+
+    res = db_store.delete_dashboard_user(target_user)
+    if not res.get("ok"):
+        return jsonify({"success": False, "error": res.get("error")}), 400
+
+    logging.info(f"Dashboard user '{target_user}' deleted by '{session.get('user')}'")
+    return jsonify({"success": True, "message": f"User '{target_user}' deleted."})
+
+
+# ==============================================================================
+# 6. ALERTS API (sales-facing, critical only)
+# ==============================================================================
+
+@app.route('/api/alerts', methods=['GET'])
+def list_sales_alerts():
+    """Plain-English critical alerts for every signed-in user.
+
+    Reads db_store.get_sales_alerts, whose column list excludes context,
+    fingerprint and slack_permalink and which never touches alert_details, so a
+    traceback cannot reach this response.
+    """
+    if not session.get("authenticated", False):
+        return jsonify({"success": False, "error": "Not signed in."}), 401
+    try:
+        severity = request.args.get("severity") or None
+        include_ackd = request.args.get("include_acknowledged", "true").lower() != "false"
+        limit = int(request.args.get("limit", 100))
+        rows = db_store.get_sales_alerts(
+            severity=severity,
+            include_ackd=include_ackd,
+            limit=limit)
+        return jsonify({
+            "success": True,
+            "data": rows,
+            "alerts": rows,
+            "count": len(rows),
+            "open_count": db_store.open_alert_count(severity=severity)
+        })
+    except Exception as e:
+        logging.error(f"Error fetching sales alerts: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/alerts/<int:alert_id>/ack', methods=['POST'])
+def ack_sales_alert(alert_id: int):
+    if not session.get("authenticated", False):
+        return jsonify({"success": False, "error": "Not signed in."}), 401
+    try:
+        if not db_store.ack_alert(alert_id, session.get("user", "")):
+            return jsonify({"success": False, "error": "Alert not found"}), 404
+        logging.info(f"Alert {alert_id} acknowledged by {session.get('user')}")
+        return jsonify({"success": True, "message": "Acknowledged."})
+    except Exception as e:
+        logging.error(f"Error acknowledging alert {alert_id}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/alerts/<int:alert_id>', methods=['DELETE'])
+def delete_sales_alert(alert_id: int):
+    """Permanently delete a sales alert.  Only permitted once the alert has
+    been acknowledged or resolved — the DB enforces this too, but we return
+    a clear 400 so the UI can explain the rule rather than showing a silent
+    failure.  Any authenticated user may delete their own acknowledged alerts.
+    """
+    if not session.get("authenticated", False):
+        return jsonify({"success": False, "error": "Not signed in."}), 401
+    try:
+        row = db_store.get_alert_detail(alert_id)
+        if not row:
+            return jsonify({"success": False, "error": "Alert not found."}), 404
+        if row.get("status") not in ("acknowledged", "resolved"):
+            return jsonify({
+                "success": False,
+                "error": "Alert must be acknowledged before it can be deleted."
+            }), 400
+        if not db_store.delete_alert(alert_id):
+            return jsonify({"success": False, "error": "Could not delete alert."}), 500
+        logging.info(f"Alert {alert_id} deleted by {session.get('user')}")
+        return jsonify({"success": True, "message": "Alert deleted."})
+    except Exception as e:
+        logging.error(f"Error deleting alert {alert_id}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/developers/alerts/<int:alert_id>', methods=['DELETE'])
+def delete_dev_alert(alert_id: int):
+    """Permanently delete a developer alert.  Admin only.  Same acknowledged-
+    or-resolved guard as the sales endpoint.
+    """
+    denied = require_admin()
+    if denied:
+        return denied
+    try:
+        row = db_store.get_alert_detail(alert_id)
+        if not row:
+            return jsonify({"success": False, "error": "Alert not found."}), 404
+        if row.get("status") not in ("acknowledged", "resolved"):
+            return jsonify({
+                "success": False,
+                "error": "Alert must be acknowledged or resolved before it can be deleted."
+            }), 400
+        if not db_store.delete_alert(alert_id):
+            return jsonify({"success": False, "error": "Could not delete alert."}), 500
+        logging.info(f"Developer alert {alert_id} deleted by {session.get('user')}")
+        return jsonify({"success": True, "message": "Alert deleted."})
+    except Exception as e:
+        logging.error(f"Error deleting developer alert {alert_id}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ==============================================================================
+# 7. SERVICE WATCHER
+#
+# This lives in the dashboard process, so a control_server outage means no
+# service-level alerts at all. The bridges still push their own failures via
+# critical_alerts.report, which is why alerting is not dependent on this thread.
+# ==============================================================================
+
+WATCH_INTERVAL_SECONDS = 30
+WATCH_TIMEOUT_SECONDS = 5
+# Consecutive failed watcher passes before alerting that monitoring is broken.
+WATCH_FAILURE_ALERT_AFTER = 3
+
+# Only services the supervisor actually keeps alive belong here. Every entry is
+# a permanent alerting obligation: a component listed here that nothing starts
+# will report SERVICE_DOWN forever and train the team to ignore the channel.
+# This list must stay in sync with SERVICES in start_services.py.
+COMPONENT_ENDPOINTS = {
+    "whatsapp_gateway": "http://127.0.0.1:3101",
+    "whatsapp_bridge": "http://127.0.0.1:8101",
+    "telegram_bridge": "http://127.0.0.1:8003",
+}
+COMPONENT_LABELS = {
+    "whatsapp_gateway": "The WhatsApp session (Node gateway)",
+    "whatsapp_bridge": "The WhatsApp connection",
+    "telegram_bridge": "The Telegram connection",
+    "postgres": "The system database",
+}
+_watch_state: Dict[str, bool] = {}
+
+
+def _service_healthy(component: str, base_url: str) -> bool:
+    """True only when a bridge answers 200 AND reports itself ready.
+
+    Bridges do not agree on the shape of their health response, so both
+    conventions are accepted rather than hardcoding one per component:
+    - {"status": "ready", ...}      — telegram, discord, Node gateway
+    - {"ok": true, ...}             — whatsapp bridge
+    - {"status": "not_ready", ...} / {"ok": false, ...}  — explicitly not ready
+
+    A component that answers 200 but says neither field is treated as unhealthy:
+    silence about readiness is not evidence of readiness. A plain
+    connection-refused / timeout counts as unhealthy regardless.
+    """
+    try:
+        resp = requests.get(f"{base_url}/health", timeout=WATCH_TIMEOUT_SECONDS)
+        if resp.status_code != 200:
+            return False
+        try:
+            body = resp.json()
+        except ValueError:
+            return False
+
+        if not isinstance(body, dict):
+            return False
+
+        if "status" in body:
+            return str(body.get("status", "")).lower() == "ready"
+        if "ok" in body:
+            return bool(body.get("ok"))
+        return False
+    except requests.RequestException:
+        return False
+
+
+def _watch_once() -> Dict[str, bool]:
+    state: Dict[str, bool] = {}
+
+    for component, url in COMPONENT_ENDPOINTS.items():
+        state[component] = _service_healthy(component, url)
+
+    try:
+        state["postgres"] = db.is_available()
+    except Exception:
+        state["postgres"] = False
+
+    # Only transitions are reported, so a service that stays down does not post
+    # on every tick, and a flapping service does not flood the channel.
+    #
+    # The first pass still reports anything already unhealthy. _watch_state lives
+    # only in this process, so an outage that began before (or during) a restart
+    # has no prior state to transition away from. Treating the first pass as a
+    # pure baseline meant such an outage was silently absorbed and then, because
+    # the state never changed again, never reported at all: restarting the
+    # dashboard mid-incident erased the alert permanently. Healthy components are
+    # the only ones safe to adopt silently, since a transition away from healthy
+    # would have produced SERVICE_RECOVERED for something nobody saw break.
+    for component, healthy in state.items():
+        previous = _watch_state.get(component)
+        _watch_state[component] = healthy
+        if previous is None and healthy:
+            continue
+        if previous is not None and previous == healthy:
+            continue
+        label = COMPONENT_LABELS.get(component, component)
+        if healthy:
+            alerts.report(code="SERVICE_RECOVERED", severity="info", component=component,
+                          summary_plain=f"{label} is working again.",
+                          technical_detail=f"{component} recovered and is answering health checks.",
+                          key=component)
+        else:
+            alerts.report(code="SERVICE_DOWN", severity="critical", component=component,
+                          summary_plain=f"{label} is not responding. "
+                                        f"Client messages may not be reaching the team.",
+                          technical_detail=f"{component} failed its health check at "
+                                            f"{COMPONENT_ENDPOINTS.get(component, 'the PostgreSQL pool')}.",
+                          key=component)
+    return state
+
+
+def _watch_loop() -> None:
+    consecutive_failures = 0
+    while True:
+        try:
+            _watch_once()
+            consecutive_failures = 0
+        except Exception as e:
+            # The watcher must outlive any single failure inside it.
+            logging.error(f"Service watcher pass failed: {e}")
+            consecutive_failures += 1
+            # A pass that keeps failing is worse than a logged line: it means
+            # nothing is being monitored at all while everything looks fine.
+            # Alert once the failure is clearly persistent rather than a blip.
+            if consecutive_failures == WATCH_FAILURE_ALERT_AFTER:
+                alerts.report(
+                    code="SERVICE_WATCHER_BROKEN", severity="critical",
+                    component="dashboard",
+                    summary_plain="The system stopped checking whether services are "
+                                  "alive. Outages may go unnoticed.",
+                    technical_detail=f"The service watcher has failed "
+                                      f"{consecutive_failures} times in a row and is no longer "
+                                      f"reliable. Last error: {e}",
+                    key="service_watcher")
+        time.sleep(WATCH_INTERVAL_SECONDS)
+
+
+def start_watcher() -> threading.Thread:
+    thread = threading.Thread(target=_watch_loop, name="service-watcher", daemon=True)
+    thread.start()
+    logging.info(f"Service watcher started (every {WATCH_INTERVAL_SECONDS}s).")
+    return thread
+
+
+# ==============================================================================
 # MAIN RUNNER
 # ==============================================================================
 
 if __name__ == "__main__":
+    alerts.install_excepthook("dashboard")
+    start_watcher()
     logging.info(f"🚀 Bitlink Control Dashboard REST API running on http://0.0.0.0:{PORT}")
     app.run(host="0.0.0.0", port=PORT, debug=False)

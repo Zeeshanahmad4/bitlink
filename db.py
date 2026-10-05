@@ -201,6 +201,19 @@ def execute_returning_id(sql: str, params: Sequence[Any] = ()) -> Optional[int]:
         return list(row.values())[0]
 
 
+def execute_returning_one(sql: str, params: Sequence[Any] = ()) -> Optional[Dict[str, Any]]:
+    """Run a write that returns a row (INSERT/UPDATE ... RETURNING) and commit.
+
+    query_one() deliberately never commits, which makes an uncommitted write look
+    like it vanished to every later transaction. Anything that writes and reads
+    back the generated values has to use this instead.
+    """
+    with _cursor(commit=True) as cur:
+        cur.execute(sql, params)
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
 def execute_many(sql: str, rows: Iterable[Sequence[Any]]) -> None:
     """Batch insert in a single transaction."""
     with _cursor(commit=True) as cur:

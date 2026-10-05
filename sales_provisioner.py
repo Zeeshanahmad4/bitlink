@@ -187,7 +187,14 @@ def evaluate_lead_guards(
         logging.info(f"🛡️ [GUARD] Sender {clean_id} is in BLOCKLIST. Dropping lead.")
         return GuardAction.BLOCKED_BLOCKLIST, None, None
 
-    # 2. Deduplication Check (#5)
+    # 2. Delivery Client Check: If already handed off to delivery, reuse delivery channel
+    delivery_client = sales_store.find_delivery_mapping_by_external_id(clean_id)
+    if delivery_client:
+        ch_id = delivery_client.get("slack_channel_id")
+        logging.info(f"🚚 [GUARD] Client {clean_id} is in DELIVERY ({ch_id}). Reusing Delivery Slack channel.")
+        return GuardAction.DEDUPLICATED, ch_id, delivery_client
+
+    # 3. Deduplication Check (#5)
     existing_lead = sales_store.find_existing_open_lead(clean_id)
     if existing_lead:
         channel_id = existing_lead.get("slack_channel_id")

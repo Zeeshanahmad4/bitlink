@@ -62,8 +62,10 @@ AUTOMATION_MARKERS = (
 
 BOT_NAME_PREFIXES = ("bitlink",)
 
-# "Abdul: hello" / "**Abdul**: hello" -- the bridge's client relay format.
-_CLIENT_PREFIX_RE = re.compile(r"^\s*\*{0,2}(?P<name>[^*\n]{1,60}?)\*{0,2}\s*:\s+")
+# "Abdul: hello" / "**Abdul**: hello" / "*Abdul:* hello" -- the bridge's client relay format.
+_CLIENT_PREFIX_RE = re.compile(
+    r"^\s*(?:\*(?P<name>[^*\n:]{1,60}?):\*\s*|\*{0,2}(?P<name2>[^*\n:]{1,60}?)\*{0,2}\s*:\s*)"
+)
 # "*Abdul* sent a file: x.pdf" / "Abdul sent a photo"
 _CLIENT_MEDIA_RE = re.compile(
     r"^\s*\*{0,2}(?P<name>[^*\n]{1,60}?)\*{0,2}\s+sent\s+(?:a|an|some)\b[^:\n]{0,30}:?\s*",
@@ -133,12 +135,36 @@ def unwrap_edited(msg):
     return current
 
 
+def extract_message_text(msg):
+    """Extract message text from either 'text' or Slack 'blocks'."""
+    text = (msg.get("text") or "").strip()
+    if not text and msg.get("blocks"):
+        extracted = []
+        for block in msg.get("blocks", []):
+            if not isinstance(block, dict):
+                continue
+            b_text = block.get("text")
+            if isinstance(b_text, dict) and b_text.get("text"):
+                extracted.append(b_text.get("text"))
+            elif isinstance(b_text, str) and b_text:
+                extracted.append(b_text)
+            elif block.get("type") == "rich_text":
+                for element in block.get("elements", []):
+                    if isinstance(element, dict):
+                        for sub in element.get("elements", []):
+                            if isinstance(sub, dict) and sub.get("text"):
+                                extracted.append(sub.get("text"))
+        if extracted:
+            text = " ".join(extracted).strip()
+    return clean_text(text)
+
+
 def _client_prefix_match(text):
     """Match the bridge's client relay prefix, returning the regex match."""
     for pattern in (_CLIENT_MEDIA_RE, _CLIENT_PREFIX_RE):
         match = pattern.match(text or "")
         if match:
-            name = (match.group("name") or "").strip()
+            name = (match.group("name") or match.group("name2") or "").strip()
             if name and not _TEAM_PREFIX_RE.match(name) and not _is_bitlink_bot_name(name):
                 return match
     return None
@@ -147,7 +173,9 @@ def _client_prefix_match(text):
 def _client_name_from_text(text):
     """Pull the client display name out of a bridge-relayed message."""
     match = _client_prefix_match(text)
-    return match.group("name").strip() if match else ""
+    if not match:
+        return ""
+    return (match.group("name") or match.group("name2") or "").strip()
 
 
 def classify(msg, client_names=frozenset()):
@@ -163,7 +191,7 @@ def classify(msg, client_names=frozenset()):
     if msg.get("subtype") in SYSTEM_SUBTYPES:
         return "system"
 
-    text = clean_text(msg.get("text"))
+    text = extract_message_text(msg)
     if any(marker in text for marker in AUTOMATION_MARKERS):
         return "system"
 
@@ -283,12 +311,12 @@ def build_transcript(messages, client_names=(), name_cache=None, max_chars=MAX_T
         if role in (None, "system"):
             continue
 
-        text = clean_text(msg.get("text"))
+        text = extract_message_text(msg)
         who = ""
         if role == "client":
             match = _client_prefix_match(text)
             if match:
-                who = match.group("name").strip()
+                who = (match.group("name") or match.group("name2") or "").strip()
                 # Drop the "Name:" / "Name sent a file:" preamble -- the
                 # transcript already labels the line with the speaker.
                 text = (text[match.end():] or text).strip()
@@ -356,7 +384,7 @@ def _paginate(fetch, max_messages, page_size, **kwargs):
 
 
 def fetch_conversation(web_client, channel_id, max_messages=300, page_size=200,
-                       include_threads=True, max_thread_replies=200):
+                       include_threads=True, max_thread_replies=200, fallback_clients=None):
     """Page through a whole channel and return messages oldest-first.
 
     The API returns newest-first and pages with a cursor, so a single
@@ -371,6 +399,30 @@ def fetch_conversation(web_client, channel_id, max_messages=300, page_size=200,
     collected = _paginate(
         web_client.conversations_history, max_messages, page_size, channel=channel_id
     )
+
+    # If the primary bot was not in the channel, attempt join or fallback clients
+    if not collected:
+        try:
+            join_resp = web_client.conversations_join(channel=channel_id)
+            if join_resp and join_resp.get("ok"):
+                collected = _paginate(
+                    web_client.conversations_history, max_messages, page_size, channel=channel_id
+                )
+        except Exception:
+            pass
+
+    if not collected and fallback_clients:
+        for fb in fallback_clients:
+            try:
+                fb_collected = _paginate(
+                    fb.conversations_history, max_messages, page_size, channel=channel_id
+                )
+                if fb_collected:
+                    collected = fb_collected
+                    web_client = fb
+                    break
+            except Exception as e:
+                logging.debug(f"Fallback history read failed: {e}")
 
     if include_threads and collected:
         by_ts = {m.get("ts"): m for m in collected if m.get("ts")}

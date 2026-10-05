@@ -1,0 +1,197 @@
+version: '3.8'
+
+# ============================================================
+# BitLink — Docker Compose
+# All services run on the internal "bitlink-net" bridge.
+# Only the dashboard port is published, and only to 127.0.0.1
+# so that Nginx is the sole public entry point.
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # PostgreSQL 15 — single source of truth for all CRM data
+  # ----------------------------------------------------------
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: bitlink
+      POSTGRES_USER: bitlink
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme_in_env}
+    volumes:
+      # Persistent database storage — survives container rebuilds
+      - pg_data:/var/lib/postgresql/data
+      # Schema is applied automatically on first boot
+      - ./schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    networks:
+      - bitlink-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bitlink -d bitlink"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------
+  # WhatsApp Baileys Gateway — Node.js, port 3101 (internal)
+  # ----------------------------------------------------------
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      # WhatsApp session — must persist or QR scan is required on every restart
+      - ./whatsapp-bot/auth_info:/app/whatsapp-bot/auth_info
+    networks:
+      - bitlink-net
+
+  # ----------------------------------------------------------
+  # Flask Control Dashboard — served on 127.0.0.1:5050
+  # Nginx proxies HTTPS → this port
+  # ----------------------------------------------------------
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    restart: always
+    command: python control_server.py
+    env_file:
+      - .env
+    environment:
+      # Override .env values to use Docker service hostnames
+      DATABASE_URL: postgresql://bitlink:${DB_PASSWORD:-changeme_in_env}@db:5432/bitlink
+      NODE_API_URL: http://gateway:3101
+      WHATSAPP_REFRESH_PORT: "8101"
+      TELEGRAM_REFRESH_PORT: "8003"
+      CONTROL_DASHBOARD_PORT: "5050"
+    ports:
+      # Bind only to localhost — Nginx forwards traffic here, nothing else can reach it
+      - "127.0.0.1:5050:5050"
+    depends_on:
+      db:
+        condition: service_healthy
+      gateway:
+        condition: service_started
+    networks:
+      - bitlink-net
+
+  # ----------------------------------------------------------
+  # WhatsApp Python Bridge — relay between Baileys and Slack
+  # TZ=Asia/Karachi is required so that Sunday auto-reply's bare
+  # datetime.now().weekday() check evaluates in PKT, not UTC.
+  # Without this the "is it Sunday?" check is off by 5 hours:
+  # Sunday in PKT starts Saturday 19:00 UTC and ends Sunday 19:00 UTC.
+  # ----------------------------------------------------------
+  wa-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    restart: always
+    command: python main_whatsapp.py
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://bitlink:${DB_PASSWORD:-changeme_in_env}@db:5432/bitlink
+      NODE_API_URL: http://gateway:3101
+      WHATSAPP_REFRESH_PORT: "8101"
+      # Set container local timezone to PKT so datetime.now() returns PKT.
+      # The daily digest and auto-archive workers use ZoneInfo("Asia/Karachi")
+      # and are not affected, but Sunday auto-reply uses bare datetime.now().
+      TZ: Asia/Karachi
+    depends_on:
+      db:
+        condition: service_healthy
+      gateway:
+        condition: service_started
+    networks:
+      - bitlink-net
+
+  # ----------------------------------------------------------
+  # Telegram Python Bridge — relay between Telegram and Slack
+  # ----------------------------------------------------------
+  tg-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    restart: always
+    command: python main_telegram.py
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://bitlink:${DB_PASSWORD:-changeme_in_env}@db:5432/bitlink
+      TELEGRAM_REFRESH_PORT: "8003"
+    volumes:
+      # Telegram session — must persist or phone login is required on every restart
+      - ./sessions:/app/sessions
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - bitlink-net
+
+  # ----------------------------------------------------------
+  # Slack App Manager — slash commands and modals
+  # ----------------------------------------------------------
+  slack-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    restart: always
+    command: python bitlink_manager.py
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://bitlink:${DB_PASSWORD:-changeme_in_env}@db:5432/bitlink
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - bitlink-net
+
+  # ----------------------------------------------------------
+  # AI Jobs Scheduler — runs sales_ai_jobs.py as a long-running
+  # scheduled service so Sunday AI stage inference and daily
+  # auto-archive run automatically without manual intervention.
+  #
+  # Schedule (PKT, set via TZ=Asia/Karachi):
+  #   - Weekly stage AI inference : every Sunday at 02:00 PKT
+  #   - Auto-archive closed leads : every day   at 03:00 PKT
+  #
+  # To run immediately (e.g. for a manual archive pass):
+  #   docker compose run --rm ai-jobs python sales_ai_jobs.py --run-now
+  # ----------------------------------------------------------
+  ai-jobs:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    restart: always
+    command: python sales_ai_jobs.py
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://bitlink:${DB_PASSWORD:-changeme_in_env}@db:5432/bitlink
+      # TZ must match wa-bridge and be PKT so the schedule library's
+      # sunday.at("02:00") and day.at("03:00") fire in PKT, not UTC.
+      TZ: Asia/Karachi
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - bitlink-net
+
+# ============================================================
+# Volumes — data that must outlive container rebuilds
+# ============================================================
+volumes:
+  pg_data:
+    driver: local
+
+# ============================================================
+# Networks — all services talk to each other on this bridge
+# ============================================================
+networks:
+  bitlink-net:
+    driver: bridge

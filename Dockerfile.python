@@ -1,0 +1,28 @@
+# Dockerfile.python — Used by: dashboard, wa-bridge, tg-bridge, slack-manager
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system-level build deps required by psycopg2, bcrypt, and aiohttp
+# tzdata is required so Python's zoneinfo module can resolve Asia/Karachi.
+# Without it ZoneInfo("Asia/Karachi") raises KeyError and the digest and
+# Sunday auto-reply fall back to naive UTC time inside the container.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies first (better layer caching)
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -r requirements.txt
+
+# Copy the full application source
+COPY . .
+
+ENV PYTHONUNBUFFERED=1
+
+# Default command — overridden per-service in docker-compose.yml
+CMD ["python", "control_server.py"]

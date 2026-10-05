@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 from io import BytesIO
 import json
+import traceback
+from typing import Optional
 from slack_format import for_client
 from telethon.tl import types
 import aiohttp
@@ -28,6 +30,7 @@ from collections import deque
 import sales_provisioner
 import sales_store
 import db_store
+import critical_alerts
 
 # Client mappings come from the shared data layer
 from g_sheets_client import get_client_mappings
@@ -92,12 +95,26 @@ def tg_set_stopped(active: bool):
             _tg_emergency_state["outbox_held"] = 0
     if active:
         logging.critical("🛑 TELEGRAM EMERGENCY STOP ENGAGED - all Telegram traffic halted.")
+        _report("EMERGENCY_STOP_ON",
+                "Client intake is paused. Telegram messages are not being delivered.",
+                "The kill switch engaged; all Telegram traffic is halted. Inbound "
+                "messages are discarded and nothing is sent to customers.",
+                {"client_key": "emergency_stop"})
     else:
         s = tg_snapshot()
         logging.critical(
             f"▶️ TELEGRAM EMERGENCY STOP RELEASED. {s.get('inbound_dropped', 0)} inbound "
             f"message(s) discarded, {s.get('outbound_blocked', 0)} outbound send(s) blocked."
         )
+        _report("EMERGENCY_STOP_OFF",
+                "Client intake has resumed.",
+                f"The kill switch was released. {s.get('inbound_dropped', 0)} inbound "
+                f"message(s) were discarded and {s.get('outbound_blocked', 0)} "
+                f"outbound send(s) were blocked while stopped.",
+                {"client_key": "emergency_stop",
+                 "inbound_dropped": s.get("inbound_dropped", 0),
+                 "outbound_blocked": s.get("outbound_blocked", 0)},
+                severity="info")
         if s.get("outbox_held"):
             logging.warning(
                 f"⚠️ {s.get('outbox_held')} Telegram message(s) queued before the stop are still "
@@ -143,6 +160,7 @@ DOWNLOAD_DIR.mkdir(exist_ok=True)
 
 # IMPROVEMENT #2: Better deduplication with client_msg_id
 processed_slack_events = deque(maxlen=1000)  # Increased capacity
+posted_telegram_bridge_events = deque(maxlen=2000)
 
 # IMPROVEMENT #3: Message ID mapping for edit/delete support
 # Format: "channel_id:ts" -> telegram_message_id
@@ -362,7 +380,7 @@ async def sync_slack_downtime_telegram():
                     continue
 
                 text = (msg.get("text") or "").strip()
-                if text.startswith("dev "):
+                if text.startswith("!!"):
                     continue
 
                 map_key = f"{channel_id}:{ts}"
@@ -501,6 +519,7 @@ async def reload_config():
                     "telegram_id": tg_id,
                     "slack_channel_id": ch_id,
                     "paused": str(lead.get("paused", False)).strip().lower() in ["true", "1", "yes"],
+                    "delivery_handed_off": bool(lead.get("delivery_handed_off")),
                     "type": "sales"
                 })
     except Exception as e:
@@ -534,7 +553,7 @@ async def reload_config():
         new_telegram_map[str(item["telegram_id"])] = item
         new_slack_map[item["slack_channel_id"]] = item
 
-    for item in delivery_mappings:
+    for item in sorted(delivery_mappings, key=lambda m: 1 if not m.get("paused") else 0):
         new_telegram_map[str(item["external_id"])] = item
         new_telegram_map[str(item["telegram_id"])] = item
         new_slack_map[item["slack_channel_id"]] = item
@@ -591,10 +610,26 @@ async def handle_send_message(request):
         logging.error(f"Error in handle_send_message: {e}")
         return web.Response(status=500, text=f"Error: {e}")
 
+async def handle_health(request):
+    """Health check endpoint consumed by control_server.py's dashboard monitor."""
+    snap = tg_snapshot()
+    # Must reflect the emergency stop. Reporting a hardcoded "ready" while
+    # traffic is halted makes the bridge report healthy during an outage, which
+    # stops the dashboard watcher from ever noticing.
+    return web.json_response({
+        "status": "not_ready" if snap.get("active") else "ready",
+        "ok": not snap.get("active"),
+        "bridge": "telegram",
+        "clients": len(telegram_to_slack_map),
+        "emergency_stop": snap,
+    })
+
+
 async def run_refresh_server():
     """Runs the aiohttp server to listen for the refresh signal."""
     app = web.Application()
     app.add_routes([
+        web.get('/health', handle_health),
         web.post('/refresh', handle_refresh),
         web.post('/test-alert', handle_test_alert),
         web.post('/send', handle_send_message)
@@ -609,36 +644,89 @@ async def run_refresh_server():
 
 # --- 5. CORE LOGIC (Telegram -> Slack) ---
 
+def _resolve_sender_name(sender) -> Optional[str]:
+    """Best-effort display name for whoever sent a message, or None if unknown.
+
+    In a group the sender is normally the member who wrote the message, but it
+    can also be a Channel (an anonymous admin posting, or a message sent as the
+    channel) or be missing altogether, so every attribute is read defensively
+    instead of assuming the sender is a User with a ``first_name``.
+    """
+    if sender is None:
+        return None
+
+    # "Posted as" wins: it is the name the group itself displays.
+    post_author = getattr(sender, "post_author", None)
+    if post_author:
+        return post_author
+
+    full_name = " ".join(
+        part for part in (getattr(sender, "first_name", None),
+                          getattr(sender, "last_name", None)) if part
+    )
+    if full_name:
+        return full_name
+
+    return getattr(sender, "username", None) or getattr(sender, "title", None)
+
+
 async def get_sender_details(event):
     """Gets sender's name and profile picture URL."""
     sender = await event.get_sender()
-    name = "Unknown User"
     pfp_path = None
 
-    if sender:
-        name = sender.first_name or sender.username or "User"
+    name = _resolve_sender_name(sender)
+    photo_source = sender if name else None
+
+    if not name:
+        # No usable sender entity. Only fall back to the chat identity for a
+        # direct message: in a group the chat title is the *group's* name, and
+        # using it here would credit the message to the group, not the member.
+        chat = getattr(event, "chat", None)
+        if isinstance(chat, types.User):
+            name = getattr(chat, "first_name", None) or getattr(chat, "username", None)
+            photo_source = chat
+        else:
+            name = getattr(getattr(event, "message", None), "post_author", None)
+
+    if photo_source is not None:
         try:
             pfp_path = await telethon_client.download_profile_photo(
-                sender,
-                file=DOWNLOAD_DIR / f"{sender.id}_pfp.jpg"
-            )
-        except Exception:
-            pfp_path = None
-    elif hasattr(event.chat, 'title'):
-        name = event.chat.title
-        try:
-            pfp_path = await telethon_client.download_profile_photo(
-                event.chat,
-                file=DOWNLOAD_DIR / f"{event.chat.id}_pfp.jpg"
+                photo_source,
+                file=DOWNLOAD_DIR / f"{photo_source.id}_pfp.jpg"
             )
         except Exception:
             pfp_path = None
 
-    return name, pfp_path
+    return name or "Unknown User", pfp_path
 
-@telethon_client.on(events.NewMessage)
+def _report(code: str, summary_plain: str, technical_detail: str, context: dict,
+            severity: str = "critical", tb_text: Optional[str] = None) -> None:
+    """Push a Telegram bridge failure to the developer channel.
+
+    Never raises. The async event handler this is called from must keep running
+    even when the alerting path is broken.
+    """
+    try:
+        critical_alerts.report(code=code, severity=severity, component="telegram_bridge",
+                               summary_plain=summary_plain, technical_detail=technical_detail,
+                               context=context, key=context.get("client_key"), tb_text=tb_text)
+    except Exception as e:
+        logging.error(f"Alert reporting for {code} failed: {e}")
+
+
+def _current_traceback() -> Optional[str]:
+    """Traceback of the exception being handled, or None when there is not one.
+
+    Passing a literal 'NoneType: None' would overwrite a real traceback when the
+    same alert recurs, so this returns None instead of formatting an empty one.
+    """
+    return traceback.format_exc() if sys.exc_info()[0] is not None else None
+
+
+@telethon_client.on(events.NewMessage(incoming=True, forwards=False))
 async def handle_telegram_message(event):
-    """Listens for new Telegram messages and forwards them to Slack."""
+    """Listens for new inbound Telegram messages and forwards them to Slack."""
     logging.info(f"DEBUG: New message received from Chat ID: {event.chat_id}")
     if event.out: return
 
@@ -664,46 +752,79 @@ async def handle_telegram_message(event):
         }
         try:
             sender = await event.get_sender()
-            if sender:
-                msg_dict["senderName"] = sender.first_name or sender.username or "User"
-            elif hasattr(event.chat, 'title'):
-                msg_dict["senderName"] = event.chat.title
+            resolved_name = _resolve_sender_name(sender)
+            if resolved_name:
+                msg_dict["senderName"] = resolved_name
+            else:
+                chat = getattr(event, "chat", None)
+                if isinstance(chat, types.User):
+                    msg_dict["senderName"] = getattr(chat, "first_name", None) or chat_id
+                else:
+                    msg_dict["senderName"] = getattr(chat, "title", None) or chat_id
         except Exception:
             pass
 
-        logging.info(f"TG-IN NEW LEAD: chat_id={chat_id!r} (sender={msg_dict['senderName']}). Triggering Sales Provisioner...")
-        from slack_sdk import WebClient
-        web_client_sync = WebClient(token=SLACK_BOT_TOKEN)
-
-        import asyncio
         loop = asyncio.get_running_loop()
-        provision_res = await loop.run_in_executor(None, sales_provisioner.provision_telegram_lead, msg_dict, web_client_sync)
 
-        status = provision_res.get("status")
-
-        if status in ["provisioned", "deduplicated"]:
-            slack_channel = provision_res.get("channel_id")
-            client_info = provision_res.get("lead") or {
-                "client_name": provision_res.get("channel_name", f"sale-tg-{chat_id}"),
+        # Check if client belongs to Delivery
+        delivery_rec = await loop.run_in_executor(None, db_store.find_delivery_mapping_by_external_id, str(chat_id))
+        if delivery_rec and delivery_rec.get("slack_channel_id"):
+            del_ch = delivery_rec["slack_channel_id"]
+            client_info = {
+                "client_name": delivery_rec.get("client_name", "Telegram Client"),
                 "platform": "telegram",
-                "whatsapp_chat_id": chat_id,
-                "external_id": chat_id,
-                "slack_channel_id": slack_channel,
-                "paused": False
+                "external_id": str(chat_id),
+                "telegram_id": chat_id,
+                "slack_channel_id": del_ch,
+                "paused": delivery_rec.get("paused", False),
+                "type": "delivery"
             }
             telegram_to_slack_map[chat_id] = client_info
-            slack_to_telegram_map[slack_channel] = client_info
-            logging.info(f"✅ Real-time mapping established: {chat_id} <-> {slack_channel}")
+            slack_to_telegram_map[del_ch] = client_info
+            logging.info(f"✅ Routed incoming Telegram message from delivery client {chat_id} directly to Delivery channel {del_ch}")
         else:
-            logging.info(f"Lead intake status for {chat_id}: {status}. Skipping forward.")
-            return
+            logging.info(f"TG-IN NEW LEAD: chat_id={chat_id!r} (sender={msg_dict['senderName']}). Triggering Sales Provisioner...")
+            from slack_sdk import WebClient
+            web_client_sync = WebClient(token=SLACK_BOT_TOKEN)
+
+            provision_res = await loop.run_in_executor(None, sales_provisioner.provision_telegram_lead, msg_dict, web_client_sync)
+
+            status = provision_res.get("status")
+
+            if status in ["provisioned", "deduplicated"]:
+                slack_channel = provision_res.get("channel_id")
+                client_info = provision_res.get("lead") or {
+                    "client_name": provision_res.get("channel_name", f"sale-tg-{chat_id}"),
+                    "platform": "telegram",
+                    "whatsapp_chat_id": chat_id,
+                    "external_id": chat_id,
+                    "slack_channel_id": slack_channel,
+                    "paused": False
+                }
+                telegram_to_slack_map[chat_id] = client_info
+                slack_to_telegram_map[slack_channel] = client_info
+                logging.info(f"✅ Real-time mapping established: {chat_id} <-> {slack_channel}")
+            else:
+                logging.info(f"Lead intake status for {chat_id}: {status}. Skipping forward.")
+                return
 
     client_info = telegram_to_slack_map[chat_id]
-    slack_channel_id = client_info["slack_channel_id"]  # ← MOVE THIS LINE UP!
+    slack_channel_id = client_info["slack_channel_id"]
 
-    # CHECK IF CHANNEL IS PAUSED - BLOCK TELEGRAM TO SLACK
-    if client_info.get("paused", False):
-        logging.info(f"Channel {slack_channel_id} is paused. Skipping Telegram→Slack forwarding.")
+    # CHECK IF CHANNEL IS PAUSED OR HANDED OFF TO DELIVERY
+    if client_info.get("type") == "sales":
+        is_handed_off = bool(client_info.get("delivery_handed_off"))
+        if not is_handed_off:
+            loop = asyncio.get_running_loop()
+            is_handed_off = await loop.run_in_executor(None, db_store.is_client_in_delivery, str(chat_id))
+        if is_handed_off:
+            logging.info(f"Sales channel {slack_channel_id} is handed off to delivery. Skipping Telegram→Slack forwarding.")
+            return
+        if client_info.get("paused", False):
+            logging.info(f"Sales channel {slack_channel_id} is paused. Skipping Telegram→Slack forwarding.")
+            return
+    elif client_info.get("paused", False):
+        logging.info(f"Delivery channel {slack_channel_id} is paused. Skipping Telegram→Slack forwarding.")
         return
 
     client_name = client_info["client_name"]  # ← CRITICAL: Get client name from mapping
@@ -719,6 +840,13 @@ async def handle_telegram_message(event):
                 file_path = await telethon_client.download_media(event.message, file=DOWNLOAD_DIR)
                 if not file_path or not os.path.exists(file_path):
                     logging.error(f"Failed to download media from Telegram message in {chat_id}")
+                    _report("MEDIA_DOWNLOAD_FAILED",
+                            f"A file from {sender_name} could not be retrieved.",
+                            "Telethon download_media returned no usable file path.",
+                            {"sender_name": sender_name, "chat_id": chat_id,
+                             "message_id": getattr(event.message, "id", None),
+                             "slack_channel": slack_channel_id,
+                             "client_key": str(chat_id)})
                     return
 
                 file_name = Path(file_path).name
@@ -740,8 +868,24 @@ async def handle_telegram_message(event):
                     )
                 except SlackApiError as e:
                     logging.error(f"Slack API error uploading file to Slack channel {slack_channel_id}: {e.response.get('error')}")
+                    _report("MEDIA_UPLOAD_FAILED",
+                            f"A file from {sender_name} could not be processed.",
+                            f"SlackApiError: {e.response.get('error')}",
+                            {"sender_name": sender_name, "chat_id": chat_id,
+                             "message_id": getattr(event.message, "id", None),
+                             "slack_channel": slack_channel_id, "file_name": file_name,
+                             "client_key": str(chat_id)},
+                            tb_text=_current_traceback())
                 except Exception as up_err:
                     logging.error(f"Critical error uploading file to Slack channel {slack_channel_id}: {up_err}")
+                    _report("MEDIA_UPLOAD_FAILED",
+                            f"A file from {sender_name} could not be processed.",
+                            f"{type(up_err).__name__}: {up_err}",
+                            {"sender_name": sender_name, "chat_id": chat_id,
+                             "message_id": getattr(event.message, "id", None),
+                             "slack_channel": slack_channel_id, "file_name": file_name,
+                             "client_key": str(chat_id)},
+                            tb_text=_current_traceback())
 
                 if upload_resp:
                     file_info = upload_resp.get("file") or (upload_resp.get("files") and upload_resp["files"][0]) or {}
@@ -749,20 +893,30 @@ async def handle_telegram_message(event):
                     channel_shares = shares.get("public", {}).get(slack_channel_id) or shares.get("private", {}).get(slack_channel_id) or []
                     slack_ts = channel_shares[0].get("ts") if channel_shares else file_info.get("timestamp")
 
-                    if slack_ts and event.message.id:
-                        map_key = f"{event.chat_id}_{event.message.id}"
-                        telegram_to_slack_message_map[map_key] = {
-                            "channel": slack_channel_id,
-                            "ts": slack_ts,
-                            "sender_name": sender_name
-                        }
-                        save_reverse_map()
+                    if slack_ts:
+                        posted_telegram_bridge_events.append((slack_channel_id, slack_ts))
+                        if event.message.id:
+                            map_key = f"{event.chat_id}_{event.message.id}"
+                            telegram_to_slack_message_map[map_key] = {
+                                "channel": slack_channel_id,
+                                "ts": slack_ts,
+                                "sender_name": sender_name
+                            }
+                            save_reverse_map()
 
                     logging.info(f"Forwarded file '{file_name}' from '{sender_name}' to Slack channel {slack_channel_id}.")
                 else:
                     logging.error(f"Could not upload file '{file_name}' to Slack channel {slack_channel_id}.")
             except Exception as e:
                 logging.error(f"Error handling Telegram media message: {e}", exc_info=True)
+                _report("MEDIA_HANDLER_ERROR",
+                        f"A message from {sender_name} could not be delivered.",
+                        f"{type(e).__name__}: {e}",
+                        {"sender_name": sender_name, "chat_id": chat_id,
+                         "message_id": getattr(event.message, "id", None),
+                         "slack_channel": slack_channel_id,
+                         "client_key": str(chat_id)},
+                        tb_text=_current_traceback())
             finally:
                 if file_path and os.path.exists(file_path):
                     try:
@@ -780,16 +934,18 @@ async def handle_telegram_message(event):
                 blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": message_text}}]
             )
             slack_ts = slack_response.get("ts")
-            if slack_ts and event.message.id:
-                map_key = f"{event.chat_id}_{event.message.id}"
-                telegram_to_slack_message_map[map_key] = {
-                    "channel": slack_channel_id,
-                    "ts": slack_ts,
-                    "sender_name": sender_name
-                }
-                if len(telegram_to_slack_message_map) > 10000:
-                    oldest = next(iter(telegram_to_slack_message_map))
-                    del telegram_to_slack_message_map[oldest]
+            if slack_ts:
+                posted_telegram_bridge_events.append((slack_channel_id, slack_ts))
+                if event.message.id:
+                    map_key = f"{event.chat_id}_{event.message.id}"
+                    telegram_to_slack_message_map[map_key] = {
+                        "channel": slack_channel_id,
+                        "ts": slack_ts,
+                        "sender_name": sender_name
+                    }
+                    if len(telegram_to_slack_message_map) > 10000:
+                        oldest = next(iter(telegram_to_slack_message_map))
+                        del telegram_to_slack_message_map[oldest]
             logging.info(f"Forwarded text from '{sender_name}' to Slack.")
 
         if pfp_path and os.path.exists(pfp_path):
@@ -797,8 +953,24 @@ async def handle_telegram_message(event):
 
     except SlackApiError as e:
         logging.error(f"Slack API Error forwarding from Telegram: {e.response['error']}")
+        _report("SLACK_FORWARD_FAILED",
+                "A message from Telegram could not be delivered to the team channel.",
+                f"SlackApiError: {e.response.get('error')}",
+                {"chat_id": getattr(event.chat_id, "chat_id", event.chat_id),
+                 "message_id": getattr(event.message, "id", None),
+                 "slack_channel": slack_channel_id,
+                 "client_key": str(getattr(event.chat_id, "chat_id", event.chat_id))},
+                tb_text=_current_traceback())
     except Exception as e:
         logging.error(f"An unexpected error occurred in handle_telegram_message: {e}", exc_info=True)
+        _report("FORWARD_HANDLER_ERROR",
+                "A message from Telegram could not be delivered.",
+                f"{type(e).__name__}: {e}",
+                {"chat_id": getattr(event.chat_id, "chat_id", event.chat_id),
+                 "message_id": getattr(event.message, "id", None),
+                 "slack_channel": slack_channel_id,
+                 "client_key": str(getattr(event.chat_id, "chat_id", event.chat_id))},
+                tb_text=_current_traceback())
 
 @telethon_client.on(events.MessageEdited)
 async def handle_telegram_edit(event):
@@ -957,9 +1129,7 @@ async def handle_chat_actions_universal(event):
     logging.info(f"Bot has been added to a new chat: '{getattr(chat, 'title', chat_id)}' ({chat_id})")
 
     adder = await event.get_added_by()
-    adder_name = "an unknown user"
-    if adder:
-        adder_name = f"{adder.first_name} (@{adder.username})" if adder.username else adder.first_name
+    adder_name = _resolve_sender_name(adder) or "an unknown user"
 
     await send_new_chat_alert_to_slack(
         chat=chat,
@@ -1080,22 +1250,37 @@ async def process_slack_event_async(event: dict, bot_token: str):
         user = event.get("user")
         bot_id = event.get("bot_id")
         username = event.get("username")
+        icons = event.get("icons", {})
 
         if not channel_id or not ts:
             return
 
-        # 1. Block self-echoes from this Telegram bridge bot
-        if bot_id and slack_bot_id and bot_id == slack_bot_id:
-            return
-        if user and slack_bot_user_id and user == slack_bot_user_id:
-            return
-
-        # 2. Block any message that has username set (messages forwarded from Telegram to Slack)
+        # 1. Block any message that has username set (messages forwarded to Slack on behalf of external clients)
         if username:
+            logging.debug(f"[SKIP ECHO] Dropping message with username='{username}' ch={channel_id}")
             return
 
-        # 4. Check for bot messages: ONLY allow the Manager Bot (for AI replies / snippets)
-        if bot_id:
+        # 2. Block icons that indicate a bridged client message
+        if icons and isinstance(icons, dict):
+            emoji = icons.get("emoji", "")
+            if emoji in [":bust_in_silhouette:", ":robot_face:"]:
+                logging.debug(f"[SKIP ECHO] Dropping message with bridge icon '{emoji}' ch={channel_id}")
+                return
+
+        # 3. Block self-echoes from this and all known bridge bots
+        KNOWN_BRIDGE_BOT_IDS = {slack_bot_id, "B0C3L7FGLRY", "B0C3FBURUE9"} - {None}
+        KNOWN_BRIDGE_USER_IDS = {slack_bot_user_id, "U0C3L7FKA7L", "U0C3E3DRC9H"} - {None}
+        if bot_id and bot_id in KNOWN_BRIDGE_BOT_IDS:
+            return
+        if user and user in KNOWN_BRIDGE_USER_IDS:
+            return
+
+        # 4. Block messages whose (channel, ts) were posted by the bridge
+        if (channel_id, ts) in posted_telegram_bridge_events:
+            return
+
+        # 5. Check for bot messages: ONLY allow the Manager Bot (for AI replies / snippets)
+        if bot_id or subtype == "bot_message":
             master_bot_user_id = os.getenv("MASTER_SLACK_BOT_ID")
             is_manager = False
             if manager_bot_id and bot_id == manager_bot_id:
@@ -1115,9 +1300,6 @@ async def process_slack_event_async(event: dict, bot_token: str):
                 logging.info("[SKIP] Ignoring internal Manager Bot notification.")
                 return
 
-        elif user and user == slack_bot_user_id:
-            return
-
         # Deduplication
         client_msg_id = event.get("client_msg_id")
         if client_msg_id:
@@ -1132,6 +1314,27 @@ async def process_slack_event_async(event: dict, bot_token: str):
         # Map to Telegram
         mapping = slack_to_telegram_map.get(channel_id)
         if not mapping:
+            return
+
+        telegram_id = mapping.get("telegram_id") or mapping.get("external_id")
+        loop = asyncio.get_running_loop()
+
+        # Check delivery handoff & paused status
+        is_handed_off = bool(mapping.get("delivery_handed_off", False))
+        if not is_handed_off and mapping.get("type") == "sales":
+            is_handed_off = await loop.run_in_executor(None, db_store.is_client_in_delivery, str(telegram_id or ""))
+
+        if is_handed_off:
+            logging.info(f"Sales channel {channel_id} is handed over to delivery. Blocking Slack→Telegram message.")
+            try:
+                await slack_client.chat_postMessage(
+                    channel=channel_id,
+                    thread_ts=ts,
+                    text="*Info:* This client has been handed over to delivery. The sales channel is permanently paused and cannot send or receive messages. Please communicate via the delivery channel.",
+                    username="Bitlink Bridge Info"
+                )
+            except Exception as e:
+                logging.error(f"Failed to post handoff info to Slack: {e}")
             return
 
         # CHECK IF CHANNEL IS PAUSED
@@ -1152,6 +1355,11 @@ async def process_slack_event_async(event: dict, bot_token: str):
 
         # 1. CLEAN SLACK FORMATTING
         text_caption = clean_slack_formatting(text_caption)
+
+        # '!!' prefix: message must remain in the channel and must not forward to the client
+        if text_caption.strip().startswith('!!'):
+            logging.info(f"[NOTE '!!'] Message kept in Slack channel {channel_id}, not forwarded to Telegram: \"{text_caption[:60]}\"")
+            return
 
         # Mention replacement logic
         potential_names = re.findall(r'@([A-Za-z][A-Za-z0-9_\-]+)', text_caption)
@@ -1383,6 +1591,15 @@ def start_slack_socket_mode():
                         except Exception as e:
                             logging.error(f"Failed to queue event: {e}")
 
+                # Handle interactive events (button clicks, modal submissions) from lead welcome cards
+                elif req.type == "interactive":
+                    try:
+                        import bitlink_manager
+                        bitlink_manager.handle_slack_block_actions(client, req, web_client_sync)
+                        bitlink_manager.handle_modal_submission(client, req, web_client_sync)
+                    except Exception as ie:
+                        logging.error(f"Interactive event handler error: {ie}")
+
             except Exception as e:
                 logging.error(f"SocketMode handler error: {e}", exc_info=True)
 
@@ -1470,7 +1687,14 @@ async def main():
         logging.info("Starting Telethon client...")
         await telethon_client.start()
         me = await telethon_client.get_me()
-        logging.info(f"Logged in to Telegram as: {me.first_name} (@{me.username})")
+        if me is None:
+            logging.warning("Telethon get_me() returned None — session may not be fully authorized yet. Retrying once...")
+            await asyncio.sleep(2)
+            me = await telethon_client.get_me()
+        if me is not None:
+            logging.info(f"Logged in to Telegram as: {me.first_name} (@{me.username})")
+        else:
+            logging.error("Telethon could not resolve the logged-in account. The session file may be corrupted or unauthorized. Delete sessions/ and restart to re-authenticate.")
 
         # Startup scan
         async def startup_scan():
@@ -1540,6 +1764,7 @@ async def main():
         )
 
 if __name__ == "__main__":
+    critical_alerts.install_excepthook("telegram_bridge")
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):

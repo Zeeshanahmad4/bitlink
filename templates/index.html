@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bitlink Control Dashboard</title>
-    <link rel="icon" type="image/png" href="/static/favicon.png?v=1">
-    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=1">
+    <link rel="icon" type="image/png" href="/static/favicon.png?v=3">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=2">
     <!-- Google Fonts: Plus Jakarta Sans & Space Grotesk -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -468,7 +468,7 @@
         <div class="w-full max-w-md bg-card rounded-4xl shadow-raised border border-line p-8 sm:p-10 relative overflow-hidden flex flex-col items-center">
             
             <!-- Top App Logo -->
-            <img src="/static/login_logo.png"
+            <img src="/static/login_logo.png?v=2"
                  alt="Bitlink"
                  draggable="false"
                  class="w-64 max-w-full h-auto mb-6 select-none pointer-events-none">
@@ -558,7 +558,7 @@
                 <button 
                     @click="activeTag = 'delivery'; currentView = 'delivery'"
                     class="flex items-center space-x-3 px-2 py-2 rounded-2xl hover:bg-white transition-all duration-200 active:scale-[0.98]">
-                    <img src="/static/favicon.png" alt="" class="h-10 w-10 object-contain flex-shrink-0">
+                    <img src="/static/favicon.png?v=3" alt="" class="h-10 w-10 object-contain flex-shrink-0">
                     <span class="text-ink font-bold text-sm tracking-wide">Bitlink Control</span>
                 </button>
 
@@ -646,6 +646,56 @@
                         <i class="fa-solid fa-trophy text-base w-5 text-center"></i>
                         <span class="text-sm font-medium">Leaderboard</span>
                     </button>
+
+                    <!-- Sales Alerts Nav Item -->
+                    <button 
+                        @click="activeTag = 'sales'; currentView = 'sales_alerts'; fetchSalesAlerts()"
+                        :class="activeTag === 'sales' && currentView === 'sales_alerts' ? 'bg-selbg text-seltext shadow-glowsm' : 'text-muted hover:text-ink hover:bg-white'"
+                        :data-active="activeTag === 'sales' && currentView === 'sales_alerts'"
+                        class="nav-rail flex items-center justify-between px-3 py-2.5 rounded-xl transition-all duration-200">
+                        <div class="flex items-center space-x-3">
+                            <i class="fa-solid fa-bell text-base w-5 text-center"></i>
+                            <span class="text-sm font-medium">Alerts</span>
+                        </div>
+                        <span x-show="openSalesAlertCount > 0" class="inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white" x-text="openSalesAlertCount"></span>
+                    </button>
+
+                    <!-- Developers Nav Item (Admin Only).
+                         x-if, not x-show: a sales session must not receive this
+                         markup at all, so the control cannot be reached by
+                         removing a CSS class. Every endpoint is admin-gated too.
+                         -->
+                    <template x-if="isAdmin">
+                        <div class="space-y-1">
+                            <button 
+                                @click="activeTag = 'dev'; currentView = 'developers'; fetchDevData()"
+                                :class="activeTag === 'dev' && currentView === 'developers' ? 'bg-selbg text-seltext shadow-glowsm' : 'text-muted hover:text-ink hover:bg-white'"
+                                :data-active="activeTag === 'dev' && currentView === 'developers'"
+                                class="nav-rail w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all duration-200">
+                                <i class="fa-solid fa-code text-base w-5 text-center"></i>
+                                <span class="text-sm font-medium">Developers</span>
+                            </button>
+                            <button 
+                                @click="activeTag = 'dev'; currentView = 'dev_alerts'; fetchDevAlerts()"
+                                :class="activeTag === 'dev' && currentView === 'dev_alerts' ? 'bg-selbg text-seltext shadow-glowsm' : 'text-muted hover:text-ink hover:bg-white'"
+                                :data-active="activeTag === 'dev' && currentView === 'dev_alerts'"
+                                class="nav-rail w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all duration-200">
+                                <div class="flex items-center space-x-3">
+                                    <i class="fa-solid fa-triangle-exclamation text-base w-5 text-center"></i>
+                                    <span class="text-sm font-medium">Developer Alerts</span>
+                                </div>
+                                <span x-show="openDevAlertCount > 0" class="inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white" x-text="openDevAlertCount"></span>
+                            </button>
+                            <button 
+                                @click="activeTag = 'admin'; currentView = 'users'; fetchDashboardUsers()"
+                                :class="activeTag === 'admin' && currentView === 'users' ? 'bg-selbg text-seltext shadow-glowsm' : 'text-muted hover:text-ink hover:bg-white'"
+                                :data-active="activeTag === 'admin' && currentView === 'users'"
+                                class="nav-rail w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all duration-200">
+                                <i class="fa-solid fa-users-gear text-base w-5 text-center"></i>
+                                <span class="text-sm font-medium">Dashboard Users</span>
+                            </button>
+                        </div>
+                    </template>
                 </nav>
             </div>
 
@@ -687,12 +737,6 @@
 
                 <!-- Top Right Controls -->
                 <div class="flex items-center space-x-3">
-                    <button 
-                        @click="refreshAll()"
-                        class="h-10 w-10 rounded-full bg-white hover:bg-selbg border border-slate-200/80 text-slate-600 hover:text-primary flex items-center justify-center transition shadow-sm hover:shadow-glowsm icon-btn" 
-                        title="Refresh All System Data">
-                        <i class="fa-solid fa-rotate text-sm" :class="isLoading ? 'fa-spin text-primary' : ''"></i>
-                    </button>
 
                     <!-- Main Action Pill Button (Per View) -->
                     <template x-if="currentView === 'delivery'">
@@ -737,6 +781,66 @@
                             class="inline-flex items-center space-x-2 px-5 py-2.5 rounded-full text-xs font-bold btn-emerald shadow-md transition active:scale-95">
                             <i class="fa-solid fa-plus text-xs"></i>
                             <span>Add Snippet</span>
+                        </button>
+                    </template>
+
+                    <template x-if="isAdmin && currentView === 'developers'">
+                        <div class="flex items-center space-x-2">
+                            <button 
+                                @click="isAddPmModalOpen = true" 
+                                class="inline-flex items-center space-x-1.5 px-3.5 py-2.5 rounded-full text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 shadow-sm transition active:scale-95">
+                                <i class="fa-solid fa-user-tie text-xs"></i>
+                                <span>Add PM</span>
+                            </button>
+                            <button 
+                                @click="isAddChannelModalOpen = true" 
+                                class="inline-flex items-center space-x-1.5 px-3.5 py-2.5 rounded-full text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 shadow-sm transition active:scale-95">
+                                <i class="fa-brands fa-slack text-xs text-emerald-600"></i>
+                                <span>New Channel</span>
+                            </button>
+                            <button 
+                                @click="openAddDevModal()" 
+                                class="inline-flex items-center space-x-1.5 px-4 py-2.5 rounded-full text-xs font-bold btn-emerald shadow-md transition active:scale-95">
+                                <i class="fa-solid fa-plus text-xs"></i>
+                                <span>Add Developer</span>
+                            </button>
+                        </div>
+                    </template>
+
+                    <template x-if="isAdmin && currentView === 'users'">
+                        <div class="flex items-center space-x-2">
+                            <button 
+                                @click="fetchDashboardUsers()" 
+                                class="inline-flex items-center space-x-1.5 px-3.5 py-2.5 rounded-full text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 shadow-sm transition active:scale-95" title="Refresh Users">
+                                <i class="fa-solid fa-arrows-rotate text-xs"></i>
+                                <span>Refresh</span>
+                            </button>
+                            <button 
+                                @click="openAddUserModal()" 
+                                class="inline-flex items-center space-x-1.5 px-4 py-2.5 rounded-full text-xs font-bold btn-emerald shadow-md transition active:scale-95">
+                                <i class="fa-solid fa-user-plus text-xs"></i>
+                                <span>Add User</span>
+                            </button>
+                        </div>
+                    </template>
+
+                    <template x-if="currentView === 'sales_alerts'">
+                        <button 
+                            @click="fetchSalesAlerts()" 
+                            :disabled="salesAlertsLoading"
+                            class="inline-flex items-center space-x-1.5 px-3.5 py-2.5 rounded-full text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 shadow-sm transition active:scale-95" title="Refresh Sales Alerts">
+                            <i class="fa-solid fa-arrows-rotate text-xs" :class="salesAlertsLoading ? 'fa-spin' : ''"></i>
+                            <span>Refresh</span>
+                        </button>
+                    </template>
+
+                    <template x-if="isAdmin && currentView === 'dev_alerts'">
+                        <button 
+                            @click="fetchDevAlerts()" 
+                            :disabled="devLoading"
+                            class="inline-flex items-center space-x-1.5 px-3.5 py-2.5 rounded-full text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 shadow-sm transition active:scale-95" title="Refresh Developer Alerts">
+                            <i class="fa-solid fa-arrows-rotate text-xs" :class="devLoading ? 'fa-spin' : ''"></i>
+                            <span>Refresh Alerts</span>
                         </button>
                     </template>
                 </div>
@@ -1063,9 +1167,11 @@
                                             <button 
                                                 @click="toggleLeadPause(lead)"
                                                 class="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-[11px] font-bold transition shadow-sm"
-                                                :class="lead.paused ? 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-emerald-200'">
+                                                :class="lead.paused ? 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-emerald-200'"
+                                                :title="lead.delivery_handed_off ? 'Handed off to Delivery (Cannot be resumed)' : 'Click to toggle active/pause'">
                                                 <span class="h-1.5 w-1.5 rounded-full" :class="lead.paused ? 'bg-amber-500' : 'bg-emerald-500'"></span>
                                                 <span x-text="lead.paused ? 'Paused' : 'Active'"></span>
+                                                <i x-show="lead.delivery_handed_off" class="fa-solid fa-lock text-[9px] text-amber-600 ml-0.5"></i>
                                             </button>
                                         </td>
                                         <td class="py-3.5 px-3">
@@ -1264,7 +1370,7 @@
                 <!-- ----------------------------------------------------------- -->
                 <!-- VIEW 4: SETTINGS & SAFETY CONTROLS -->
                 <!-- ----------------------------------------------------------- -->
-                <div x-show="activeTag === 'sales' && currentView === 'settings'" class="max-w-4xl space-y-6" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
+                <div x-show="activeTag === 'sales' && currentView === 'settings'" class="w-full space-y-6" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
                     
                     <!-- Kill-Switch Master Card -->
                     <div class="p-6 rounded-3xl border transition"
@@ -1330,10 +1436,16 @@
                             <div>
                                 <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Auto-Archive Deals (Days)</label>
                                 <input 
-                                    type="number" 
-                                    x-model="settings.archive_after_days" 
+                                    type="number"
+                                    min="1"
+                                    max="365"
+                                    x-model.number="settings.archive_after_days" 
                                     @blur="saveSettings('archive_after_days')"
-                                    class="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-mono font-bold text-slate-800 focus:outline-none">
+                                    @change="saveSettings('archive_after_days')"
+                                    class="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500">
+                                <p class="text-[11px] text-slate-400 mt-1">
+                                    Won, lost, and delivery-handed-off channels are automatically archived this many days after closing. Applies to both WhatsApp and Telegram leads. Minimum 1 day.
+                                </p>
                             </div>
                         </div>
                     </div>
@@ -1417,30 +1529,40 @@
                 <!-- ----------------------------------------------------------- -->
                 <!-- VIEW 5: UNIVERSAL BLOCKLIST -->
                 <!-- ----------------------------------------------------------- -->
-                <div x-show="activeTag === 'sales' && currentView === 'blocklist'" class="max-w-4xl" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
-                    <div class="flex items-center justify-between mb-6">
+                <div x-show="activeTag === 'sales' && currentView === 'blocklist'" class="w-full space-y-6" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-100">
                         <div>
-                            <h2 class="text-lg font-bold text-slate-900 tracking-tight">Universal Blocklist</h2>
+                            <h2 class="text-lg font-bold text-slate-900 tracking-tight flex items-center space-x-2">
+                                <i class="fa-solid fa-ban text-rose-600"></i>
+                                <span>Universal Blocklist</span>
+                            </h2>
                             <p class="text-xs text-slate-500 mt-0.5">Blocked numbers are dropped permanently across all bridges with zero noise.</p>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-xs font-mono text-slate-400" x-text="blocklist.length + ' blocked'"></span>
+                            <button @click="openAddBlocklistModal()" class="inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition shadow-sm">
+                                <i class="fa-solid fa-plus text-[10px]"></i>
+                                <span>Block Number</span>
+                            </button>
                         </div>
                     </div>
 
-                    <div class="overflow-x-auto w-full pb-4">
-                        <table class="min-w-full text-left">
+                    <div class="overflow-x-auto w-full">
+                        <table class="w-full table-fixed text-left text-xs">
                             <thead>
                                 <tr class="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                                    <th class="pb-3 px-3">Blocked Phone / JID</th>
-                                    <th class="pb-3 px-3">Reason</th>
-                                    <th class="pb-3 px-3">Date Added</th>
-                                    <th class="pb-3 px-3 text-right">Actions</th>
+                                    <th class="pb-3 px-3 w-4/12">Blocked Phone / JID</th>
+                                    <th class="pb-3 px-3 w-4/12">Reason</th>
+                                    <th class="pb-3 px-3 w-2/12 text-center">Date Added</th>
+                                    <th class="pb-3 px-3 w-2/12 text-right">Actions</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100 text-xs">
                                 <template x-for="(item, index) in blocklist" :key="item.row_idx">
-<tr class="row-hover stagger-item" :style="'--i:' + Math.min(index || 0, 12)">
-                                        <td class="py-3.5 px-3 font-mono font-bold text-rose-700" x-text="item.external_id"></td>
-                                        <td class="py-3.5 px-3 text-slate-600" x-text="item.reason || 'Spam'"></td>
-                                        <td class="py-3.5 px-3 font-mono text-slate-400 text-[11px]" x-text="item.added_at"></td>
+                                    <tr class="row-hover stagger-item" :style="'--i:' + Math.min(index || 0, 12)">
+                                        <td class="py-3.5 px-3 font-mono font-bold text-rose-700 truncate" x-text="item.external_id"></td>
+                                        <td class="py-3.5 px-3 text-slate-600 truncate" x-text="item.reason || 'Spam'"></td>
+                                        <td class="py-3.5 px-3 font-mono text-slate-400 text-[11px] text-center" x-text="item.added_at"></td>
                                         <td class="py-3.5 px-3 text-right">
                                             <button @click="deleteBlocklistEntry(item)" class="px-3 py-1 rounded-full text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition">
                                                 Unblock
@@ -1448,6 +1570,12 @@
                                         </td>
                                     </tr>
                                 </template>
+                                <tr x-show="blocklist.length === 0">
+                                    <td colspan="4" class="py-12 text-center text-slate-400">
+                                        <i class="fa-solid fa-shield-halved text-2xl text-slate-300 mb-2 block"></i>
+                                        No blocked numbers recorded. All bridges are clear.
+                                    </td>
+                                </tr>
                             </tbody>
                         </table>
                     </div>
@@ -1508,10 +1636,6 @@
                             <h2 class="text-xl font-bold text-slate-900 tracking-tight">Sales Leaderboard</h2>
                             <p class="text-xs text-slate-500 mt-0.5">Performance rankings based on closed deals across all platforms.</p>
                         </div>
-                        <button @click="fetchLeaderboard()" class="inline-flex items-center space-x-2 px-4 py-2 rounded-full text-xs font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 shadow-sm transition active:scale-95">
-                            <i class="fa-solid fa-arrows-rotate text-xs"></i>
-                            <span>Refresh</span>
-                        </button>
                     </div>
 
                     <!-- Top 3 Podium Cards -->
@@ -1622,6 +1746,957 @@
                     </div>
                 </div>
 
+                <!-- =============================================================== -->
+                <!-- VIEW: SALES OPERATIONAL ALERTS VIEW -->
+                <!-- =============================================================== -->
+                <div x-show="activeTag === 'sales' && currentView === 'sales_alerts'" class="space-y-8" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
+                    
+                    <!-- Header -->
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-100">
+                        <div>
+                            <h2 class="text-lg font-bold text-slate-900 tracking-tight flex items-center space-x-2">
+                                <i class="fa-solid fa-bell text-seltext"></i>
+                                <span>Sales Operational Alerts</span>
+                            </h2>
+                            <p class="text-xs text-slate-500 mt-0.5">Live status updates on client messages, delivery notifications, and automated workflows in simple English.</p>
+                        </div>
+                        <div class="flex items-center space-x-2 text-xs">
+                            <span class="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-semibold"
+                                :class="openSalesAlertCount === 0 ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-rose-50 border border-rose-200 text-rose-700'">
+                                <span class="h-2 w-2 rounded-full" :class="openSalesAlertCount === 0 ? 'bg-emerald-500' : 'bg-rose-500 animate-pulse'"></span>
+                                <span x-text="openSalesAlertCount === 0 ? 'All Systems Running Smoothly' : openSalesAlertCount + ' Issue(s) Need Attention'"></span>
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Status Overview Cards -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <!-- Card 1 -->
+                        <div class="glass-card rounded-2xl p-5 border border-slate-100">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">System Status</span>
+                                <span class="h-8 w-8 rounded-xl flex items-center justify-center" :class="openSalesAlertCount === 0 ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'">
+                                    <i class="fa-solid" :class="openSalesAlertCount === 0 ? 'fa-check' : 'fa-triangle-exclamation'"></i>
+                                </span>
+                            </div>
+                            <div class="mt-3">
+                                <div class="text-lg font-extrabold text-slate-900" x-text="openSalesAlertCount === 0 ? 'Healthy' : 'Attention Needed'"></div>
+                                <p class="text-xs text-slate-500 mt-0.5" x-text="openSalesAlertCount === 0 ? 'All client messages are delivering properly' : openSalesAlertCount + ' active issue(s) reported'"></p>
+                            </div>
+                        </div>
+
+                        <!-- Card 2 -->
+                        <div class="glass-card rounded-2xl p-5 border border-slate-100">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Needs Attention</span>
+                                <span class="h-8 w-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+                                    <i class="fa-solid fa-circle-exclamation"></i>
+                                </span>
+                            </div>
+                            <div class="mt-3">
+                                <div class="text-2xl font-extrabold text-rose-600" x-text="openSalesAlertCount"></div>
+                                <p class="text-xs text-slate-500 mt-0.5">Unacknowledged operational alerts</p>
+                            </div>
+                        </div>
+
+                        <!-- Card 3 -->
+                        <div class="glass-card rounded-2xl p-5 border border-slate-100">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Acknowledged</span>
+                                <span class="h-8 w-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                                    <i class="fa-solid fa-circle-check"></i>
+                                </span>
+                            </div>
+                            <div class="mt-3">
+                                <div class="text-2xl font-extrabold text-slate-900" x-text="(salesAlerts || []).filter(a => a.status === 'acknowledged').length"></div>
+                                <p class="text-xs text-slate-500 mt-0.5">Reviewed by the team</p>
+                            </div>
+                        </div>
+
+                        <!-- Card 4 -->
+                        <div class="glass-card rounded-2xl p-5 border border-slate-100">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Logged</span>
+                                <span class="h-8 w-8 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center">
+                                    <i class="fa-solid fa-clock-rotate-left"></i>
+                                </span>
+                            </div>
+                            <div class="mt-3">
+                                <div class="text-2xl font-extrabold text-slate-900" x-text="(salesAlerts || []).length"></div>
+                                <p class="text-xs text-slate-500 mt-0.5">Alert records in history</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Search & Filter Controls -->
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
+                        <!-- Search Box -->
+                        <div class="relative flex-1">
+                            <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                            <input 
+                                type="text" 
+                                x-model="salesAlertSearch" 
+                                placeholder="Search alerts in simple English..." 
+                                class="w-full pl-9 pr-4 py-2 text-xs rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500">
+                        </div>
+
+                        <!-- Status Filter Buttons -->
+                        <div class="flex items-center space-x-1 text-xs">
+                            <button 
+                                @click="salesAlertStatusFilter = 'all'" 
+                                :class="salesAlertStatusFilter === 'all' ? 'bg-selbg text-seltext font-bold shadow-sm' : 'text-slate-600 hover:bg-slate-100'"
+                                class="px-3 py-1.5 rounded-xl transition">
+                                All (<span x-text="(salesAlerts || []).length"></span>)
+                            </button>
+                            <button 
+                                @click="salesAlertStatusFilter = 'open'" 
+                                :class="salesAlertStatusFilter === 'open' ? 'bg-rose-100 text-rose-700 font-bold shadow-sm' : 'text-slate-600 hover:bg-slate-100'"
+                                class="px-3 py-1.5 rounded-xl transition">
+                                Needs Attention (<span x-text="openSalesAlertCount"></span>)
+                            </button>
+                            <button 
+                                @click="salesAlertStatusFilter = 'acknowledged'" 
+                                :class="salesAlertStatusFilter === 'acknowledged' ? 'bg-blue-100 text-blue-700 font-bold shadow-sm' : 'text-slate-600 hover:bg-slate-100'"
+                                class="px-3 py-1.5 rounded-xl transition">
+                                Acknowledged
+                            </button>
+                            <button 
+                                @click="salesAlertStatusFilter = 'resolved'" 
+                                :class="salesAlertStatusFilter === 'resolved' ? 'bg-emerald-100 text-emerald-700 font-bold shadow-sm' : 'text-slate-600 hover:bg-slate-100'"
+                                class="px-3 py-1.5 rounded-xl transition">
+                                Resolved
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Alerts List -->
+                    <div class="space-y-3">
+                        <template x-for="alert in filteredSalesAlerts" :key="alert.id">
+                            <div class="p-5 rounded-2xl border transition-all duration-200"
+                                :class="{
+                                    'bg-white border-rose-200 shadow-sm hover:border-rose-300': alert.status === 'open',
+                                    'bg-white border-blue-200 hover:border-blue-300': alert.status === 'acknowledged',
+                                    'bg-white border-slate-200': alert.status === 'resolved'
+                                }">
+                                <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                                    <!-- Left info -->
+                                    <div class="space-y-2 flex-1">
+                                        <!-- Top tags -->
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <!-- Status tag -->
+                                            <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold"
+                                                :class="{
+                                                    'bg-rose-100 text-rose-700': alert.status === 'open',
+                                                    'bg-blue-100 text-blue-700': alert.status === 'acknowledged',
+                                                    'bg-emerald-100 text-emerald-700': alert.status === 'resolved'
+                                                }">
+                                                <i class="fa-solid" :class="{
+                                                    'fa-triangle-exclamation': alert.status === 'open',
+                                                    'fa-check': alert.status === 'acknowledged',
+                                                    'fa-circle-check': alert.status === 'resolved'
+                                                }"></i>
+                                                <span x-text="alert.status === 'open' ? 'Needs Attention' : (alert.status === 'acknowledged' ? 'Acknowledged' : 'Resolved')"></span>
+                                            </span>
+
+                                            <!-- Category tag -->
+                                            <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 text-slate-600"
+                                                x-text="alert.category === 'client_message' ? 'Message Delivery' : (alert.category === 'server' ? 'System Connection' : 'Background Workflow')">
+                                            </span>
+
+                                            <!-- Occurrences -->
+                                            <span class="text-[11px] text-slate-400 font-medium" x-show="alert.occurrences > 1"
+                                                x-text="'Occurred ' + alert.occurrences + ' times'">
+                                            </span>
+
+                                            <!-- Time -->
+                                            <span class="text-[11px] text-slate-400">
+                                                <i class="fa-regular fa-clock mr-1"></i>
+                                                <span x-text="alert.last_seen_at || alert.created_at"></span>
+                                            </span>
+                                        </div>
+
+                                        <!-- Plain English Summary -->
+                                        <h3 class="text-base font-bold text-slate-900 leading-snug" x-text="alert.summary_plain"></h3>
+
+                                        <!-- Friendly Explanation -->
+                                        <div class="text-xs text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                            <div class="flex items-start space-x-2">
+                                                <i class="fa-solid fa-circle-info text-seltext mt-0.5"></i>
+                                                <div>
+                                                    <span class="font-semibold text-slate-800">What happened: </span>
+                                                    <span x-text="alert.summary_plain"></span>
+                                                    <div class="mt-1 text-slate-500" x-show="alert.category === 'client_message'">
+                                                        A client message could not reach the Slack team channel. The client may be waiting for a response, or an attachment could not be uploaded.
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Acknowledged metadata if any -->
+                                        <div x-show="alert.acknowledged_by" class="text-xs text-slate-500 flex items-center space-x-1.5 pt-1">
+                                            <i class="fa-solid fa-user-check text-blue-500"></i>
+                                            <span>Acknowledged by <strong class="text-slate-700" x-text="alert.acknowledged_by"></strong></span>
+                                            <span x-show="alert.acknowledged_at" class="text-slate-400" x-text="'at ' + alert.acknowledged_at"></span>
+                                        </div>
+                                    </div>
+
+                                    <!-- Right Action Button -->
+                                    <div class="flex items-center sm:self-center">
+                                        <template x-if="alert.status === 'open'">
+                                            <button 
+                                                @click="ackSalesAlert(alert.id)" 
+                                                class="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 transition active:scale-95 shadow-sm">
+                                                <i class="fa-solid fa-check"></i>
+                                                <span>Acknowledge</span>
+                                            </button>
+                                        </template>
+                                        <template x-if="alert.status === 'acknowledged'">
+                                            <div class="flex items-center space-x-2">
+                                                <span class="inline-flex items-center space-x-1 px-3 py-1.5 rounded-xl text-xs font-medium text-blue-700 bg-blue-50 border border-blue-100">
+                                                    <i class="fa-solid fa-check-double text-xs"></i>
+                                                    <span>Acknowledged</span>
+                                                </span>
+                                                <button
+                                                    @click="deleteSalesAlert(alert.id)"
+                                                    class="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition active:scale-95 shadow-sm"
+                                                    title="Permanently delete this alert">
+                                                    <i class="fa-solid fa-trash-can text-xs"></i>
+                                                    <span>Delete</span>
+                                                </button>
+                                            </div>
+                                        </template>
+                                        <template x-if="alert.status === 'resolved'">
+                                            <div class="flex items-center space-x-2">
+                                                <span class="inline-flex items-center space-x-1 px-3 py-1.5 rounded-xl text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-100">
+                                                    <i class="fa-solid fa-circle-check text-xs"></i>
+                                                    <span>Resolved</span>
+                                                </span>
+                                                <button
+                                                    @click="deleteSalesAlert(alert.id)"
+                                                    class="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition active:scale-95 shadow-sm"
+                                                    title="Permanently delete this alert">
+                                                    <i class="fa-solid fa-trash-can text-xs"></i>
+                                                    <span>Delete</span>
+                                                </button>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+
+                        <!-- Empty State -->
+                        <div x-show="filteredSalesAlerts.length === 0" class="py-16 text-center bg-white rounded-2xl border border-slate-100">
+                            <div class="h-16 w-16 mx-auto mb-4 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center text-2xl">
+                                <i class="fa-solid fa-shield-check"></i>
+                            </div>
+                            <h3 class="text-base font-bold text-slate-900">All Systems Running Smoothly</h3>
+                            <p class="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                                There are no active operational alerts. Inbound and outbound client messages are delivering normally.
+                            </p>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- =============================================================== -->
+                <!-- VIEW 8: DEVELOPERS VIEW (Admin Only) -->
+                <!-- =============================================================== -->
+                <template x-if="isAdmin">
+                <div x-show="currentView === 'developers'" class="space-y-8" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
+                    
+                    <!-- Header -->
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-100">
+                        <div>
+                            <h2 class="text-lg font-bold text-slate-900 tracking-tight flex items-center space-x-2">
+                                <i class="fa-solid fa-code text-emerald-600"></i>
+                                <span>Developer Operations & Roster</span>
+                            </h2>
+                            <p class="text-xs text-slate-500 mt-0.5">Manage error channels, assigned developers, and project managers.</p>
+                        </div>
+                        <div class="flex items-center space-x-2 text-xs">
+                            <span class="text-slate-500">Alert Channels:</span>
+                            <span class="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 border border-slate-200 text-slate-800">
+                                <span class="h-2 w-2 rounded-full" :class="alertChannels.length > 0 ? 'bg-emerald-500' : 'bg-amber-500'"></span>
+                                <span class="font-mono font-bold" x-text="alertChannels.length + ' active'"></span>
+                            </span>
+                            <button @click="isAddChannelModalOpen = true" class="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition shadow-sm" title="Add Alert Channel">
+                                <i class="fa-solid fa-plus text-[10px]"></i>
+                                <span>Add Channel</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 1. Alert Channels Section -->
+                    <div>
+                        <div class="flex items-center justify-between mb-4">
+                            <div>
+                                <h3 class="text-base font-bold text-slate-900">Alert Channels</h3>
+                                <p class="text-xs text-slate-500">All channels configured to receive real-time operational and critical failure alerts.</p>
+                            </div>
+                            <span class="text-xs font-mono text-slate-400" x-text="alertChannels.length + ' channel(s)'"></span>
+                        </div>
+                        <div class="overflow-x-auto w-full">
+                            <table class="w-full table-fixed text-left text-xs">
+                                <thead>
+                                    <tr class="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                                        <th class="pb-3 px-3 w-4/12">Channel Name</th>
+                                        <th class="pb-3 px-3 w-4/12">Channel ID</th>
+                                        <th class="pb-3 px-3 w-2/12 text-center">Status</th>
+                                        <th class="pb-3 px-3 w-2/12 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100 text-xs">
+                                    <template x-for="ch in alertChannels" :key="ch.channel_id">
+                                        <tr class="row-hover">
+                                            <td class="py-3 px-3 font-bold text-slate-900 truncate">
+                                                <span class="inline-flex items-center space-x-1.5 font-mono text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                                                    <i class="fa-solid fa-lock text-[10px] text-emerald-600" x-show="ch.is_private" title="Private Channel"></i>
+                                                    <i class="fa-brands fa-slack text-xs text-emerald-600" x-show="!ch.is_private" title="Public Channel"></i>
+                                                    <span x-text="'#' + (ch.channel_name || ch.channel_id)"></span>
+                                                </span>
+                                            </td>
+                                            <td class="py-3 px-3 font-mono text-slate-600 truncate" x-text="ch.channel_id"></td>
+                                            <td class="py-3 px-3 text-center">
+                                                <span class="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border"
+                                                    :class="!ch.is_archived ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-rose-50 text-rose-600 border-rose-200'">
+                                                    <span class="h-1.5 w-1.5 rounded-full" :class="!ch.is_archived ? 'bg-emerald-500' : 'bg-rose-500'"></span>
+                                                    <span x-text="ch.is_archived ? 'Archived' : (ch.member_count ? ch.member_count + ' members' : 'Active')"></span>
+                                                </span>
+                                            </td>
+                                            <td class="py-3 px-3 text-right space-x-1">
+                                                <button @click="syncSpecificChannel(ch.channel_id)" class="h-7 w-7 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition" title="Sync channel members">
+                                                    <i class="fa-solid fa-arrows-rotate text-xs"></i>
+                                                </button>
+                                                <button @click="deleteAlertChannel(ch)" class="h-7 w-7 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition" title="Remove channel">
+                                                    <i class="fa-regular fa-trash-can text-xs"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                    <tr x-show="alertChannels.length === 0">
+                                        <td colspan="4" class="py-6 text-center text-slate-400">No alert channels configured yet. Click "Add Channel" to create one.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 2. Developer Roster Section -->
+                    <div class="pt-6 border-t border-slate-100">
+                        <div class="flex items-center justify-between mb-4">
+                            <div>
+                                <h3 class="text-base font-bold text-slate-900">Error Channel Developers</h3>
+                                <p class="text-xs text-slate-500">Engineers in this roster receive technical failure alerts in their assigned error channel(s).</p>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <span class="text-xs font-mono text-slate-400" x-text="devRoster.length + ' developer(s)'"></span>
+                                <button @click="openAddDevModal()" class="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition shadow-sm" title="Add Developer">
+                                    <i class="fa-solid fa-plus text-[10px]"></i>
+                                    <span>Add Developer</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="overflow-x-auto w-full">
+                            <table class="w-full table-fixed text-left text-xs">
+                                <thead>
+                                    <tr class="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                                        <th class="pb-3 px-3 w-4/12">Developer</th>
+                                        <th class="pb-3 px-3 w-4/12">Slack User ID</th>
+                                        <th class="pb-3 px-3 w-2/12 text-center">Status</th>
+                                        <th class="pb-3 px-3 w-2/12 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100 text-xs">
+                                    <template x-for="(dev, index) in devRoster" :key="dev.row_idx || index">
+                                        <tr class="row-hover">
+                                            <td class="py-3 px-3 font-bold text-slate-900 truncate">
+                                                <div x-text="dev.name"></div>
+                                                <div x-show="dev.channel_ids && dev.channel_ids.length" class="flex flex-wrap gap-1 mt-1">
+                                                    <template x-for="cid in (dev.channel_ids || [])" :key="cid">
+                                                        <span class="text-[9px] font-mono px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded border border-slate-200" x-text="getChannelDisplayName(cid)"></span>
+                                                    </template>
+                                                </div>
+                                            </td>
+                                            <td class="py-3 px-3 font-mono text-slate-600 truncate" x-text="dev.slack_user_id"></td>
+                                            <td class="py-3 px-3 text-center">
+                                                <button @click="toggleDevActive(dev)" 
+                                                    :class="dev.active ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'"
+                                                    class="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border transition hover:opacity-80">
+                                                    <span class="h-1.5 w-1.5 rounded-full" :class="dev.active ? 'bg-emerald-500' : 'bg-slate-400'"></span>
+                                                    <span x-text="dev.active ? 'Active' : 'Inactive'"></span>
+                                                </button>
+                                            </td>
+                                            <td class="py-3 px-3 text-right">
+                                                <button @click="deleteDeveloper(dev)" class="h-7 w-7 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition" title="Delete developer">
+                                                    <i class="fa-regular fa-trash-can text-xs"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                    <tr x-show="devRoster.length === 0">
+                                        <td colspan="4" class="py-6 text-center text-slate-400">No developers configured yet.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Project Managers Section -->
+                    <div class="pt-6 border-t border-slate-100">
+                        <div class="flex items-center justify-between mb-4">
+                            <div>
+                                <h3 class="text-base font-bold text-slate-900">Project Managers</h3>
+                                <p class="text-xs text-slate-500">Auto-invited to every new client delivery channel upon handover.</p>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <span class="text-xs font-mono text-slate-400" x-text="devProjectManagers.length + ' manager(s)'"></span>
+                                <button @click="isAddPmModalOpen = true" class="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition shadow-sm" title="Add Project Manager">
+                                    <i class="fa-solid fa-plus text-[10px]"></i>
+                                    <span>Add PM</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="overflow-x-auto w-full">
+                            <table class="w-full table-fixed text-left text-xs">
+                                <thead>
+                                    <tr class="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                                        <th class="pb-3 px-3 w-4/12">Project Manager</th>
+                                        <th class="pb-3 px-3 w-4/12">Slack User ID</th>
+                                        <th class="pb-3 px-3 w-2/12 text-center">Status</th>
+                                        <th class="pb-3 px-3 w-2/12 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100 text-xs">
+                                    <template x-for="(pm, index) in devProjectManagers" :key="pm.row_idx || index">
+                                        <tr class="row-hover">
+                                            <td class="py-3 px-3 font-bold text-slate-900 truncate" x-text="pm.name"></td>
+                                            <td class="py-3 px-3 font-mono text-slate-600 truncate" x-text="pm.slack_user_id"></td>
+                                            <td class="py-3 px-3 text-center">
+                                                <button @click="togglePmActive(pm)" 
+                                                    :class="pm.active ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'"
+                                                    class="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border transition hover:opacity-80">
+                                                    <span class="h-1.5 w-1.5 rounded-full" :class="pm.active ? 'bg-emerald-500' : 'bg-slate-400'"></span>
+                                                    <span x-text="pm.active ? 'Active' : 'Inactive'"></span>
+                                                </button>
+                                            </td>
+                                            <td class="py-3 px-3 text-right">
+                                                <button @click="deletePm(pm)" class="h-7 w-7 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition" title="Delete PM">
+                                                    <i class="fa-regular fa-trash-can text-xs"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                    <tr x-show="devProjectManagers.length === 0">
+                                        <td colspan="4" class="py-6 text-center text-slate-400">No project managers configured yet.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div>
+                </template>
+
+                <!-- =============================================================== -->
+                <!-- VIEW 9: DEVELOPER ALERTS & DIAGNOSTICS VIEW (Admin Only) -->
+                <!-- =============================================================== -->
+                <template x-if="isAdmin">
+                <div x-show="currentView === 'dev_alerts'" class="space-y-8" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
+                    
+                    <!-- Header -->
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-100">
+                        <div>
+                            <h2 class="text-lg font-bold text-slate-900 tracking-tight flex items-center space-x-2">
+                                <i class="fa-solid fa-triangle-exclamation text-rose-600"></i>
+                                <span>Developer Diagnostics & Technical Alerts</span>
+                            </h2>
+                            <p class="text-xs text-slate-500 mt-0.5">Comprehensive error telemetry: server failures, background script exceptions, and undelivered client message traces.</p>
+                        </div>
+                        <div class="flex items-center space-x-2 text-xs">
+                            <span class="text-slate-500 font-mono" x-text="devAlerts.length + ' total logged'"></span>
+                        </div>
+                    </div>
+
+                    <!-- Category Overview Cards -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <!-- Card 1: Dropped Client Messages -->
+                        <div 
+                            @click="devCategoryFilter = 'client_message'"
+                            :class="devCategoryFilter === 'client_message' ? 'ring-2 ring-rose-500 shadow-md' : 'hover:border-rose-300'"
+                            class="glass-card rounded-2xl p-5 border border-slate-100 cursor-pointer transition">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold text-rose-700 uppercase tracking-wider">Client Messages Dropped</span>
+                                <span class="h-8 w-8 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center">
+                                    <i class="fa-solid fa-paper-plane"></i>
+                                </span>
+                            </div>
+                            <div class="mt-3">
+                                <div class="text-2xl font-extrabold text-rose-600" x-text="clientMessageAlertCount"></div>
+                                <p class="text-xs text-slate-500 mt-0.5">Messages failed to forward to Slack</p>
+                            </div>
+                        </div>
+
+                        <!-- Card 2: Server Errors -->
+                        <div 
+                            @click="devCategoryFilter = 'server'"
+                            :class="devCategoryFilter === 'server' ? 'ring-2 ring-indigo-500 shadow-md' : 'hover:border-indigo-300'"
+                            class="glass-card rounded-2xl p-5 border border-slate-100 cursor-pointer transition">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold text-indigo-700 uppercase tracking-wider">Server Errors</span>
+                                <span class="h-8 w-8 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                                    <i class="fa-solid fa-server"></i>
+                                </span>
+                            </div>
+                            <div class="mt-3">
+                                <div class="text-2xl font-extrabold text-indigo-600" x-text="serverAlertCount"></div>
+                                <p class="text-xs text-slate-500 mt-0.5">Dashboard, DB, webhooks, auth</p>
+                            </div>
+                        </div>
+
+                        <!-- Card 3: Scripts & Bridges -->
+                        <div 
+                            @click="devCategoryFilter = 'scripts'"
+                            :class="devCategoryFilter === 'scripts' ? 'ring-2 ring-amber-500 shadow-md' : 'hover:border-amber-300'"
+                            class="glass-card rounded-2xl p-5 border border-slate-100 cursor-pointer transition">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold text-amber-700 uppercase tracking-wider">Script Failures</span>
+                                <span class="h-8 w-8 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center">
+                                    <i class="fa-solid fa-scroll"></i>
+                                </span>
+                            </div>
+                            <div class="mt-3">
+                                <div class="text-2xl font-extrabold text-amber-600" x-text="scriptsAlertCount"></div>
+                                <p class="text-xs text-slate-500 mt-0.5">Bridges, pollers, AI slash commands</p>
+                            </div>
+                        </div>
+
+                        <!-- Card 4: Open / Unresolved -->
+                        <div 
+                            @click="devAlertStatusFilter = 'open'"
+                            :class="devAlertStatusFilter === 'open' ? 'ring-2 ring-purple-500 shadow-md' : 'hover:border-purple-300'"
+                            class="glass-card rounded-2xl p-5 border border-slate-100 cursor-pointer transition">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Open / Active</span>
+                                <span class="h-8 w-8 rounded-xl bg-purple-100 text-purple-600 flex items-center justify-center">
+                                    <i class="fa-solid fa-triangle-exclamation"></i>
+                                </span>
+                            </div>
+                            <div class="mt-3">
+                                <div class="text-2xl font-extrabold text-slate-900" x-text="openDevAlertCount"></div>
+                                <p class="text-xs text-slate-500 mt-0.5">Awaiting developer resolution</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Category Navigation Tabs -->
+                    <div class="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
+                        <button 
+                            @click="devCategoryFilter = 'all'"
+                            :class="devCategoryFilter === 'all' ? 'bg-slate-900 text-white shadow-sm' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'"
+                            class="inline-flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition">
+                            <i class="fa-solid fa-layer-group text-xs"></i>
+                            <span>All System Alerts</span>
+                            <span class="ml-1.5 px-1.5 py-0.2 rounded-full text-[10px]" :class="devCategoryFilter === 'all' ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600'" x-text="(devAlerts || []).length"></span>
+                        </button>
+
+                        <button 
+                            @click="devCategoryFilter = 'client_message'"
+                            :class="devCategoryFilter === 'client_message' ? 'bg-rose-600 text-white shadow-sm' : 'bg-white text-rose-700 border border-rose-200 hover:bg-rose-50'"
+                            class="inline-flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition">
+                            <i class="fa-solid fa-paper-plane text-xs"></i>
+                            <span>Client Messages (Not Forwarded to Slack)</span>
+                            <span class="ml-1.5 px-1.5 py-0.2 rounded-full text-[10px]" :class="devCategoryFilter === 'client_message' ? 'bg-rose-800 text-white' : 'bg-rose-100 text-rose-800'" x-text="clientMessageAlertCount"></span>
+                        </button>
+
+                        <button 
+                            @click="devCategoryFilter = 'server'"
+                            :class="devCategoryFilter === 'server' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50'"
+                            class="inline-flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition">
+                            <i class="fa-solid fa-server text-xs"></i>
+                            <span>Server Errors</span>
+                            <span class="ml-1.5 px-1.5 py-0.2 rounded-full text-[10px]" :class="devCategoryFilter === 'server' ? 'bg-indigo-800 text-white' : 'bg-indigo-100 text-indigo-800'" x-text="serverAlertCount"></span>
+                        </button>
+
+                        <button 
+                            @click="devCategoryFilter = 'scripts'"
+                            :class="devCategoryFilter === 'scripts' ? 'bg-amber-600 text-white shadow-sm' : 'bg-white text-amber-800 border border-amber-200 hover:bg-amber-50'"
+                            class="inline-flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition">
+                            <i class="fa-solid fa-scroll text-xs"></i>
+                            <span>Scripts & Bridges</span>
+                            <span class="ml-1.5 px-1.5 py-0.2 rounded-full text-[10px]" :class="devCategoryFilter === 'scripts' ? 'bg-amber-800 text-white' : 'bg-amber-100 text-amber-800'" x-text="scriptsAlertCount"></span>
+                        </button>
+                    </div>
+
+                    <!-- Filter Toolbar -->
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
+                        <!-- Search Box -->
+                        <div class="relative flex-1">
+                            <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                            <input 
+                                type="text" 
+                                x-model="devAlertSearch" 
+                                placeholder="Search error code, traceback, component, client ID, Slack channel..." 
+                                class="w-full pl-9 pr-4 py-2 text-xs rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500">
+                        </div>
+
+                        <!-- Dropdowns -->
+                        <div class="flex items-center space-x-2 text-xs">
+                            <select x-model="devAlertStatusFilter" class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium focus:outline-none">
+                                <option value="all">All Statuses</option>
+                                <option value="open">Open Only</option>
+                                <option value="acknowledged">Acknowledged Only</option>
+                                <option value="resolved">Resolved Only</option>
+                            </select>
+
+                            <select x-model="devAlertSeverityFilter" class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium focus:outline-none">
+                                <option value="all">All Severities</option>
+                                <option value="critical">Critical</option>
+                                <option value="warning">Warning</option>
+                                <option value="info">Info</option>
+                            </select>
+
+                            <button 
+                                @click="fetchDevAlerts()" 
+                                class="inline-flex items-center space-x-1 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition" title="Refresh Feed">
+                                <i class="fa-solid fa-arrows-rotate text-xs" :class="devLoading ? 'fa-spin' : ''"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Developer Alert Cards -->
+                    <div class="space-y-4">
+                        <template x-for="alert in filteredDevAlerts" :key="alert.id">
+                            <div class="p-5 rounded-2xl border transition-all duration-200 bg-white"
+                                :class="alert.status === 'open' ? 'border-rose-200 shadow-sm hover:border-rose-300' : 'border-slate-200'">
+                                
+                                <!-- Card Header -->
+                                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <!-- Category Badge -->
+                                        <span class="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-bold"
+                                            :class="{
+                                                'bg-rose-100 text-rose-800 border border-rose-200': alert.category === 'client_message',
+                                                'bg-indigo-100 text-indigo-800 border border-indigo-200': alert.category === 'server',
+                                                'bg-amber-100 text-amber-800 border border-amber-200': alert.category === 'scripts'
+                                            }">
+                                            <i class="fa-solid" :class="{
+                                                'fa-paper-plane': alert.category === 'client_message',
+                                                'fa-server': alert.category === 'server',
+                                                'fa-scroll': alert.category === 'scripts'
+                                            }"></i>
+                                            <span x-text="alert.category === 'client_message' ? 'CLIENT MESSAGE DROPPED' : (alert.category === 'server' ? 'SERVER ERROR' : 'SCRIPT ERROR')"></span>
+                                        </span>
+
+                                        <!-- Severity Badge -->
+                                        <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                                            :class="alert.severity === 'critical' ? 'bg-rose-100 text-rose-700' : (alert.severity === 'warning' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700')"
+                                            x-text="alert.severity">
+                                        </span>
+
+                                        <!-- Error Code -->
+                                        <span class="font-mono text-xs font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded">
+                                            Code: <span x-text="alert.code"></span>
+                                        </span>
+
+                                        <!-- Component -->
+                                        <span class="font-mono text-xs text-slate-600 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded">
+                                            <i class="fa-solid fa-cube text-[10px] mr-1 text-slate-400"></i>
+                                            <span x-text="alert.component"></span>
+                                        </span>
+
+                                        <!-- Occurrences Count -->
+                                        <span class="font-mono text-xs font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-full"
+                                            x-text="alert.occurrences + 'x'">
+                                        </span>
+                                    </div>
+
+                                    <!-- Status & Timestamps -->
+                                    <div class="flex items-center space-x-2 text-xs">
+                                        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider"
+                                            :class="alert.status === 'open' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-emerald-50 text-emerald-600 border border-emerald-200'"
+                                            x-text="alert.status">
+                                        </span>
+                                        <span class="text-slate-400 font-mono text-[11px]" x-text="'Last: ' + (alert.last_seen_at || alert.created_at)"></span>
+                                    </div>
+                                </div>
+
+                                <!-- HIGH-VISIBILITY DIAGNOSTIC BOX: FOR UNDELIVERED CLIENT MESSAGES -->
+                                <template x-if="alert.category === 'client_message' || (alert.context && (alert.context.chat_id || alert.context.slack_channel))">
+                                    <div class="mt-3.5 p-4 rounded-xl bg-rose-50/90 border border-rose-200 text-xs">
+                                        <div class="flex items-center justify-between pb-2 mb-2 border-b border-rose-200/60">
+                                            <div class="flex items-center space-x-2 text-rose-900 font-extrabold text-xs uppercase tracking-wide">
+                                                <i class="fa-solid fa-triangle-exclamation text-rose-600"></i>
+                                                <span>Client Message Not Forwarded to Slack</span>
+                                            </div>
+                                            <span class="text-[11px] font-mono text-rose-700">Inbound Webhook / Bridge Delivery Failure</span>
+                                        </div>
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                                            <div>
+                                                <span class="text-slate-500 block text-[11px]">Client Contact:</span>
+                                                <span class="font-bold text-slate-900 font-mono" x-text="alert.context?.display_name || 'N/A'"></span>
+                                                <span class="text-slate-500 font-mono block text-[10px]" x-text="alert.context?.chat_id || alert.context?.client_key || ''"></span>
+                                            </div>
+                                            <div>
+                                                <span class="text-slate-500 block text-[11px]">Target Slack Channel:</span>
+                                                <span class="font-bold text-slate-900 font-mono" x-text="alert.context?.slack_channel ? '#' + alert.context.slack_channel : 'N/A'"></span>
+                                            </div>
+                                            <div>
+                                                <span class="text-slate-500 block text-[11px]">Event / Message ID:</span>
+                                                <span class="font-mono text-slate-700 truncate block text-[11px]" x-text="alert.context?.event_id || 'N/A'" :title="alert.context?.event_id"></span>
+                                            </div>
+                                            <div>
+                                                <span class="text-slate-500 block text-[11px]">Media / Attachment:</span>
+                                                <span class="font-semibold text-slate-800" x-text="alert.context?.had_media ? 'Yes (Media Upload)' : 'No (Plain Text)'"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <!-- Summary & Technical Details -->
+                                <div class="mt-3.5 space-y-2">
+                                    <div class="text-sm font-semibold text-slate-900">
+                                        <span class="text-slate-500 text-xs font-normal">Summary: </span>
+                                        <span x-text="alert.summary_plain"></span>
+                                    </div>
+                                    <div class="text-xs font-mono text-slate-800 bg-slate-50 p-3 rounded-xl border border-slate-200 break-all select-text">
+                                        <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Technical Detail / Error:</div>
+                                        <div x-text="alert.technical_detail || 'No technical detail supplied.'"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Collapsible Python Traceback -->
+                                <template x-if="alert.traceback">
+                                    <div class="mt-3">
+                                        <div class="flex items-center justify-between">
+                                            <button 
+                                                @click="toggleTraceback(alert.id)"
+                                                class="inline-flex items-center space-x-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 transition">
+                                                <i class="fa-solid" :class="expandedTracebacks[alert.id] ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+                                                <span>Python Traceback</span>
+                                                <span class="text-[10px] font-normal text-slate-400">(Click to view stack)</span>
+                                            </button>
+                                            <button 
+                                                x-show="expandedTracebacks[alert.id]"
+                                                @click="copyToClipboard(alert.traceback, 'Traceback copied to clipboard!')" 
+                                                class="text-[11px] font-medium text-slate-500 hover:text-slate-900 flex items-center space-x-1">
+                                                <i class="fa-regular fa-copy"></i>
+                                                <span>Copy Traceback</span>
+                                            </button>
+                                        </div>
+                                        <div x-show="expandedTracebacks[alert.id]" class="mt-2">
+                                            <pre class="bg-slate-950 text-emerald-400 font-mono text-xs p-3.5 rounded-xl overflow-x-auto max-h-72 select-text border border-slate-900" x-text="alert.traceback"></pre>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <!-- Collapsible Context JSON -->
+                                <template x-if="alert.context && Object.keys(alert.context).length > 0">
+                                    <div class="mt-2.5">
+                                        <div class="flex items-center justify-between">
+                                            <button 
+                                                @click="toggleContext(alert.id)"
+                                                class="inline-flex items-center space-x-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 transition">
+                                                <i class="fa-solid" :class="expandedContexts[alert.id] ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+                                                <span>Context Payload (JSON)</span>
+                                                <span class="text-[10px] font-mono text-slate-400" x-text="'(' + Object.keys(alert.context).length + ' keys)'"></span>
+                                            </button>
+                                            <button 
+                                                x-show="expandedContexts[alert.id]"
+                                                @click="copyToClipboard(JSON.stringify(alert.context, null, 2), 'Context JSON copied!')" 
+                                                class="text-[11px] font-medium text-slate-500 hover:text-slate-900 flex items-center space-x-1">
+                                                <i class="fa-regular fa-copy"></i>
+                                                <span>Copy JSON</span>
+                                            </button>
+                                        </div>
+                                        <div x-show="expandedContexts[alert.id]" class="mt-2">
+                                            <pre class="bg-slate-900 text-sky-300 font-mono text-xs p-3 rounded-xl overflow-x-auto max-h-60 select-text" x-text="JSON.stringify(alert.context, null, 2)"></pre>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <!-- Card Actions -->
+                                <div class="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                                    <div class="flex items-center space-x-2">
+                                        <template x-if="alert.status !== 'resolved'">
+                                            <button 
+                                                @click="resolveDevAlert(alert.id)" 
+                                                class="inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition shadow-sm active:scale-95">
+                                                <i class="fa-solid fa-check"></i>
+                                                <span>Mark Resolved</span>
+                                            </button>
+                                        </template>
+                                        <template x-if="alert.slack_permalink">
+                                            <a 
+                                                :href="alert.slack_permalink" 
+                                                target="_blank" 
+                                                class="inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition">
+                                                <i class="fa-brands fa-slack text-emerald-600"></i>
+                                                <span>View in Slack</span>
+                                            </a>
+                                        </template>
+                                        <!-- Delete: visible only after acknowledged or resolved -->
+                                        <template x-if="alert.status === 'acknowledged' || alert.status === 'resolved'">
+                                            <button
+                                                @click="deleteDevAlert(alert.id)"
+                                                class="inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition shadow-sm active:scale-95"
+                                                title="Permanently delete this alert">
+                                                <i class="fa-solid fa-trash-can text-xs"></i>
+                                                <span>Delete</span>
+                                            </button>
+                                        </template>
+                                    </div>
+
+                                    <button 
+                                        @click="copyFullDiagnostic(alert)" 
+                                        class="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition">
+                                        <i class="fa-regular fa-clipboard"></i>
+                                        <span>Copy Diagnostics</span>
+                                    </button>
+                                </div>
+
+                            </div>
+                        </template>
+
+                        <!-- Empty State -->
+                        <div x-show="filteredDevAlerts.length === 0" class="py-16 text-center bg-white rounded-2xl border border-slate-100">
+                            <div class="h-16 w-16 mx-auto mb-4 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center text-2xl">
+                                <i class="fa-solid fa-code-compare"></i>
+                            </div>
+                            <h3 class="text-base font-bold text-slate-900">No Technical Alerts Matching Filters</h3>
+                            <p class="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                                No error traces, server exceptions, or dropped client messages recorded. All pipelines and background workers are operating normally.
+                            </p>
+                        </div>
+                    </div>
+
+                </div>
+                </template>
+
+                <!-- =============================================================== -->
+                <!-- VIEW 9: DASHBOARD USERS VIEW (Admin Only) -->
+                <!-- =============================================================== -->
+                <template x-if="isAdmin">
+                    <div x-show="currentView === 'users'" class="space-y-8" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
+                        
+                        <!-- Header -->
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-100">
+                            <div>
+                                <h2 class="text-lg font-bold text-slate-900 tracking-tight flex items-center space-x-2">
+                                    <i class="fa-solid fa-users-gear text-purple-600"></i>
+                                    <span>Dashboard Users & Roles</span>
+                                </h2>
+                                <p class="text-xs text-slate-500 mt-0.5">Manage user credentials and role-based permissions (admin or sales).</p>
+                            </div>
+                            <div class="flex items-center space-x-2 text-xs">
+                                <span class="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-purple-50 border border-purple-200 text-purple-800">
+                                    <i class="fa-solid fa-shield-halved text-[10px] text-purple-600"></i>
+                                    <span class="font-mono font-bold" x-text="dashboardUsers.filter(u => u.role === 'admin').length + ' Admins'"></span>
+                                </span>
+                                <span class="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 border border-blue-200 text-blue-800">
+                                    <i class="fa-solid fa-briefcase text-[10px] text-blue-600"></i>
+                                    <span class="font-mono font-bold" x-text="dashboardUsers.filter(u => u.role === 'sales').length + ' Sales'"></span>
+                                </span>
+                                <button @click="openAddUserModal()" class="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition shadow-sm" title="Add User">
+                                    <i class="fa-solid fa-plus text-[10px]"></i>
+                                    <span>Add User</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Role Permissions Explainer Cards -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="p-4 rounded-2xl bg-purple-50/50 border border-purple-100 flex items-start space-x-3">
+                                <div class="w-8 h-8 rounded-xl bg-purple-100 text-purple-600 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                    <i class="fa-solid fa-shield-halved text-sm"></i>
+                                </div>
+                                <div class="text-xs space-y-1">
+                                    <h4 class="font-bold text-slate-900">Admin Role</h4>
+                                    <p class="text-slate-600">Full platform control. Can access Developer Operations, create & manage Alert Channels, view critical failure logs, and manage team credentials.</p>
+                                </div>
+                            </div>
+                            <div class="p-4 rounded-2xl bg-blue-50/50 border border-blue-100 flex items-start space-x-3">
+                                <div class="w-8 h-8 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                    <i class="fa-solid fa-briefcase text-sm"></i>
+                                </div>
+                                <div class="text-xs space-y-1">
+                                    <h4 class="font-bold text-slate-900">Sales Role</h4>
+                                    <p class="text-slate-600">Restricted to Sales CRM. Can view leads, active chats, sales pool, blocklist, snippets, and leaderboard. <strong>Cannot view, access, or modify anything in Developer Operations.</strong></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Users Table Section -->
+                        <div>
+                            <div class="flex items-center justify-between mb-4">
+                                <div>
+                                    <h3 class="text-base font-bold text-slate-900">Active Accounts</h3>
+                                    <p class="text-xs text-slate-500">All registered users with authorized access to this control server.</p>
+                                </div>
+                                <span class="text-xs font-mono text-slate-400" x-text="dashboardUsers.length + ' user(s)'"></span>
+                            </div>
+                            <div class="overflow-x-auto w-full">
+                                <table class="w-full table-fixed text-left text-xs">
+                                    <thead>
+                                        <tr class="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                                            <th class="pb-3 px-3 w-4/12">Username</th>
+                                            <th class="pb-3 px-3 w-3/12">Role & Access</th>
+                                            <th class="pb-3 px-3 w-3/12 text-center">Last Updated</th>
+                                            <th class="pb-3 px-3 w-2/12 text-right">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100 text-xs">
+                                        <template x-for="u in dashboardUsers" :key="u.id">
+                                            <tr class="row-hover">
+                                                <td class="py-3 px-3 font-bold text-slate-900 truncate">
+                                                    <div class="flex items-center space-x-2">
+                                                        <div class="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold"
+                                                            :class="u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'">
+                                                            <span x-text="u.id.substring(0, 2).toUpperCase()"></span>
+                                                        </div>
+                                                        <span class="font-mono text-slate-800" x-text="u.id"></span>
+                                                        <span x-show="u.id === currentUser" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">You</span>
+                                                    </div>
+                                                </td>
+                                                <td class="py-3 px-3">
+                                                    <div class="flex items-center space-x-2">
+                                                        <span class="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border"
+                                                            :class="u.role === 'admin' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-blue-50 text-blue-700 border-blue-200'">
+                                                            <i class="text-[10px]" :class="u.role === 'admin' ? 'fa-solid fa-shield-halved text-purple-600' : 'fa-solid fa-briefcase text-blue-600'"></i>
+                                                            <span class="uppercase tracking-wider" x-text="u.role"></span>
+                                                        </span>
+                                                        <button @click="toggleUserRole(u)" 
+                                                            class="text-[10px] text-slate-400 hover:text-emerald-600 hover:underline transition"
+                                                            title="Toggle role">
+                                                            <span x-text="u.role === 'admin' ? 'Set to Sales' : 'Set to Admin'"></span>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                                <td class="py-3 px-3 text-center text-slate-500 font-mono text-[11px]" x-text="u.updated_at ? new Date(u.updated_at).toLocaleDateString() : '—'"></td>
+                                                <td class="py-3 px-3 text-right space-x-1">
+                                                    <button @click="openResetPasswordModal(u)" class="h-7 w-7 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition" title="Reset Password">
+                                                        <i class="fa-solid fa-key text-xs"></i>
+                                                    </button>
+                                                    <button @click="deleteUser(u)" 
+                                                        :disabled="u.id === currentUser"
+                                                        :class="u.id === currentUser ? 'opacity-30 cursor-not-allowed' : 'hover:text-rose-600 hover:bg-rose-50'"
+                                                        class="h-7 w-7 rounded-lg text-slate-400 transition" title="Delete User">
+                                                        <i class="fa-regular fa-trash-can text-xs"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                        <tr x-show="dashboardUsers.length === 0">
+                                            <td colspan="4" class="py-6 text-center text-slate-400">No dashboard users found.</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                    </div>
+                </template>
+
             </div>
 
             </div><!-- /content well -->
@@ -1634,7 +2709,181 @@
     <!-- MODALS & DIALOGS -->
     <!-- ======================================================================= -->
 
-    
+    <!-- Add Developer Modal -->
+    <div x-show="isAddDevModalOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" x-cloak>
+        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100" @click.away="isAddDevModalOpen = false">
+            <h3 class="text-base font-bold text-slate-900 mb-1">Add Developer</h3>
+            <p class="text-xs text-slate-500 mb-4">Add engineer to the error channel notification roster.</p>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Name</label>
+                    <input type="text" x-model="devFormData.name" placeholder="e.g. Jane Doe" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Slack User ID</label>
+                    <input type="text" x-model="devFormData.slack_user_id" placeholder="e.g. U0123456789" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 font-mono">
+                </div>
+                <div x-show="alertChannels.length > 0">
+                    <div class="flex items-center justify-between mb-1">
+                        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider">Assign to Alert Channels</label>
+                        <button type="button" @click="toggleSelectAllChannels()" class="text-[11px] font-semibold text-emerald-600 hover:underline" x-text="devFormData.channel_ids.length === alertChannels.length ? 'Deselect All' : 'Select All'"></button>
+                    </div>
+                    <p class="text-[11px] text-slate-500 mb-2">Check the channels this developer should be invited to:</p>
+                    <div class="max-h-36 overflow-y-auto space-y-1.5 border border-slate-200 rounded-xl p-2.5 bg-slate-50/50">
+                        <template x-for="ch in alertChannels" :key="ch.channel_id">
+                            <label class="flex items-center space-x-2 text-xs text-slate-700 hover:bg-white p-1.5 rounded-lg cursor-pointer transition">
+                                <input type="checkbox" :value="ch.channel_id" x-model="devFormData.channel_ids" class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">
+                                <span class="font-bold text-slate-900 font-mono" x-text="'#' + (ch.channel_name || ch.channel_id)"></span>
+                                <span class="text-slate-400 text-[10px] font-mono" x-text="'(' + ch.channel_id + ')'"></span>
+                            </label>
+                        </template>
+                    </div>
+                </div>
+                <div x-show="alertChannels.length === 0" class="text-xs text-amber-700 bg-amber-50 p-2.5 rounded-xl border border-amber-200">
+                    <i class="fa-solid fa-triangle-exclamation mr-1"></i> No alert channels configured yet. Create one under "Alert Channels" first so alerts can be routed.
+                </div>
+            </div>
+            <div class="flex items-center justify-end space-x-3 mt-6">
+                <button @click="isAddDevModalOpen = false" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-full transition">Cancel</button>
+                <button @click="submitAddDeveloper()" class="px-5 py-2 text-xs font-bold btn-emerald rounded-full shadow-md transition">Add Developer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Alert Channel Modal -->
+    <div x-show="isAddChannelModalOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" x-cloak>
+        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100" @click.away="isAddChannelModalOpen = false">
+            <h3 class="text-base font-bold text-slate-900 mb-1">Add Alert Channel</h3>
+            <p class="text-xs text-slate-500 mb-4">Create a new private channel in Slack or link an existing Slack channel to receive all operational alerts.</p>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center space-x-1">
+                        <i class="fa-solid fa-lock text-[10px] text-slate-400"></i>
+                        <span>Private Channel Name (create new)</span>
+                    </label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 font-mono text-sm">#</span>
+                        <input type="text" x-model="channelFormData.channel_name" placeholder="bitlink-dev-alerts-2" class="w-full pl-7 pr-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 font-mono">
+                    </div>
+                    <p class="text-[10px] text-slate-400 mt-1">Leave Channel ID blank below to have Bitlink create this private channel in Slack automatically.</p>
+                </div>
+                <div class="relative flex items-center justify-center py-1">
+                    <div class="border-t border-slate-200 w-full"></div>
+                    <span class="bg-white px-2 text-[10px] uppercase font-bold text-slate-400 absolute">OR</span>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Existing Slack Channel ID</label>
+                    <input type="text" x-model="channelFormData.channel_id" placeholder="e.g. C0C60FZENP6" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 font-mono">
+                    <p class="text-[10px] text-slate-400 mt-1">Paste an existing Slack channel ID starting with C or G.</p>
+                </div>
+            </div>
+            <div class="flex items-center justify-end space-x-3 mt-6">
+                <button @click="isAddChannelModalOpen = false" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-full transition">Cancel</button>
+                <button @click="submitAddChannel()" class="px-5 py-2 text-xs font-bold btn-emerald rounded-full shadow-md transition">Save Channel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Project Manager Modal -->
+    <div x-show="isAddPmModalOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" x-cloak>
+        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100" @click.away="isAddPmModalOpen = false">
+            <h3 class="text-base font-bold text-slate-900 mb-1">Add Project Manager</h3>
+            <p class="text-xs text-slate-500 mb-4">Add manager to be auto-invited into newly-provisioned client delivery channels.</p>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Name</label>
+                    <input type="text" x-model="pmFormData.name" placeholder="e.g. John Smith" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Slack User ID</label>
+                    <input type="text" x-model="pmFormData.slack_user_id" placeholder="e.g. U0987654321" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 font-mono">
+                </div>
+            </div>
+            <div class="flex items-center justify-end space-x-3 mt-6">
+                <button @click="isAddPmModalOpen = false" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-full transition">Cancel</button>
+                <button @click="submitAddPm()" class="px-5 py-2 text-xs font-bold btn-emerald rounded-full shadow-md transition">Add Project Manager</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Dashboard User Modal -->
+    <div x-show="isAddUserModalOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" x-cloak>
+        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100" @click.away="isAddUserModalOpen = false">
+            <h3 class="text-base font-bold text-slate-900 mb-1">Add Dashboard User</h3>
+            <p class="text-xs text-slate-500 mb-4">Create a new login credential and assign access role.</p>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Username / ID</label>
+                    <input type="text" x-model="userFormData.username" placeholder="e.g. alex_sales or dev_admin" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 font-mono">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Password</label>
+                    <input type="password" x-model="userFormData.password" placeholder="••••••••••••" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 font-mono">
+                    <p class="text-[10px] text-slate-400 mt-1">Passwords are securely hashed using bcrypt before storage.</p>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Access Role</label>
+                    <div class="grid grid-cols-2 gap-3">
+                        <label class="border rounded-xl p-3 flex flex-col cursor-pointer transition"
+                            :class="userFormData.role === 'admin' ? 'border-purple-500 bg-purple-50/50 ring-1 ring-purple-500' : 'border-slate-200 hover:bg-slate-50'">
+                            <div class="flex items-center space-x-2 mb-1">
+                                <input type="radio" value="admin" x-model="userFormData.role" class="text-purple-600 focus:ring-purple-500">
+                                <span class="font-bold text-xs text-slate-900">Admin</span>
+                            </div>
+                            <span class="text-[10px] text-slate-500">Full access, Developers page & alert management.</span>
+                        </label>
+                        <label class="border rounded-xl p-3 flex flex-col cursor-pointer transition"
+                            :class="userFormData.role === 'sales' ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500' : 'border-slate-200 hover:bg-slate-50'">
+                            <div class="flex items-center space-x-2 mb-1">
+                                <input type="radio" value="sales" x-model="userFormData.role" class="text-blue-600 focus:ring-blue-500">
+                                <span class="font-bold text-xs text-slate-900">Sales</span>
+                            </div>
+                            <span class="text-[10px] text-slate-500">Sales CRM only. No developer operations access.</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center justify-end space-x-3 mt-6">
+                <button @click="isAddUserModalOpen = false" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-full transition">Cancel</button>
+                <button @click="submitAddUser()" class="px-5 py-2 text-xs font-bold btn-emerald rounded-full shadow-md transition">Create Account</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reset Password Modal -->
+    <div x-show="isResetPasswordModalOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" x-cloak>
+        <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-100" @click.away="isResetPasswordModalOpen = false">
+            <h3 class="text-base font-bold text-slate-900 mb-1">Reset Password</h3>
+            <p class="text-xs text-slate-500 mb-4">Set a new password for <span class="font-mono font-bold text-slate-800" x-text="resetPasswordData.user_id"></span>.</p>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">New Password</label>
+                    <input type="password" x-model="resetPasswordData.password" placeholder="••••••••••••" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 font-mono">
+                </div>
+            </div>
+            <div class="flex items-center justify-end space-x-3 mt-6">
+                <button @click="isResetPasswordModalOpen = false" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-full transition">Cancel</button>
+                <button @click="submitResetPassword()" class="px-5 py-2 text-xs font-bold btn-emerald rounded-full shadow-md transition">Update Password</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CHANNEL CANNOT BE RESUMED MODAL -->
+    <div x-show="isChannelCannotBeResumedModalOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm" x-cloak>
+        <div class="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 text-center animate-in zoom-in-95 duration-200" @click.away="isChannelCannotBeResumedModalOpen = false">
+            <div class="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mx-auto mb-4 shadow-sm">
+                <i class="fa-solid fa-lock text-2xl"></i>
+            </div>
+            <h3 class="text-base font-extrabold text-slate-900 mb-2">Channel Cannot Be Resumed</h3>
+            <p class="text-xs text-slate-500 mb-5 leading-relaxed" x-text="channelBlockedModalMessage || 'This sales channel has been handed over to delivery. It is permanently paused and cannot be resumed. Client communication is strictly in the delivery channel.'"></p>
+            <div class="flex justify-center">
+                <button @click="isChannelCannotBeResumedModalOpen = false" class="px-6 py-2.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-full transition shadow-md hover:-translate-y-0.5">
+                    Understood
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- HANDOFF TABLE MODAL (Step 1) -->
     <div x-show="isHandoffTableModalOpen" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
         <div class="flex items-center justify-center min-h-screen p-4">
@@ -1716,15 +2965,15 @@
                         <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">External ID (Phone / JID)</label>
                         <input type="text" x-model="formData.external_id" required readonly placeholder="Auto-filled..." class="w-full bg-slate-200/60 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-500 cursor-not-allowed">
                     </div>
-                    <div>
-                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">New Delivery Channel Name</label>
-                        <input type="text" x-model="formData.slack_channel_name" placeholder="e.g. del-client-name" class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono">
-                        <p class="text-[10px] text-slate-400 mt-1">Provide a name to auto-create the channel.</p>
+                    <div x-show="editMode">
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Current Slack Channel</label>
+                        <input type="text" x-model="formData.current_slack_channel_id" readonly class="w-full bg-slate-200/60 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-500 cursor-not-allowed">
+                        <p class="text-[10px] text-slate-400 mt-1">Active delivery channel for this client.</p>
                     </div>
                     <div>
-                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Existing Slack Channel ID</label>
-                        <input type="text" x-model="formData.slack_channel_id" placeholder="Leave empty to auto-provision..." class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono">
-                        <p class="text-[10px] text-slate-400 mt-1">Or enter an existing ID to link without creating.</p>
+                        <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1" x-text="editMode ? 'New Delivery Channel Name (Create & Switch)' : 'Delivery Channel Name'"></label>
+                        <input type="text" x-model="formData.slack_channel_name" :required="!editMode" placeholder="e.g. del-client-name" class="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono">
+                        <p class="text-[10px] text-slate-400 mt-1" x-text="editMode ? 'Enter a new channel name to provision a new delivery channel. The current channel will be paused and conversation will route to the new channel.' : 'Channel will be auto-created and PMs will be invited.'"></p>
                     </div>
                     <div class="pt-3 flex justify-end space-x-2">
                         <button type="button" @click="isAddModalOpen = false" class="px-4 py-2 rounded-full text-xs font-bold text-slate-600 hover:bg-slate-100">Cancel</button>
@@ -1935,6 +3184,102 @@
                 snippets: [],
                 leaderboardMetrics: [],
 
+                userRole: 'sales',
+                get isAdmin() { return this.userRole === 'admin'; },
+
+                // Dashboard Users state
+                dashboardUsers: [],
+                isAddUserModalOpen: false,
+                userFormData: { username: '', password: '', role: 'sales' },
+                isResetPasswordModalOpen: false,
+                resetPasswordData: { user_id: '', password: '' },
+
+                // Sales Alerts state
+                salesAlerts: [],
+                salesAlertsLoading: false,
+                salesAlertSearch: '',
+                salesAlertStatusFilter: 'all',
+                salesAlertSeverityFilter: 'all',
+
+                // Developer / Admin state
+                devRoster: [],
+                devProjectManagers: [],
+                devErrorChannel: { channel_id: '', channel_name: '', configured: false },
+                alertChannels: [],
+                devAlerts: [],
+                devLoading: false,
+                devAlertSearch: '',
+                devCategoryFilter: 'all',
+                devAlertStatusFilter: 'all',
+                devAlertSeverityFilter: 'all',
+                expandedTracebacks: {},
+                expandedContexts: {},
+                isAddDevModalOpen: false,
+                devFormData: { name: '', slack_user_id: '', active: true, channel_ids: [] },
+                isAddPmModalOpen: false,
+                pmFormData: { name: '', slack_user_id: '', active: true },
+                isAddChannelModalOpen: false,
+                channelFormData: { channel_name: '', channel_id: '' },
+
+                get openSalesAlertCount() {
+                    return (this.salesAlerts || []).filter(a => a.status === 'open').length;
+                },
+                get openDevAlertCount() {
+                    return (this.devAlerts || []).filter(a => a.status === 'open').length;
+                },
+                get clientMessageAlertCount() {
+                    return (this.devAlerts || []).filter(a => a.category === 'client_message').length;
+                },
+                get serverAlertCount() {
+                    return (this.devAlerts || []).filter(a => a.category === 'server').length;
+                },
+                get scriptsAlertCount() {
+                    return (this.devAlerts || []).filter(a => a.category === 'scripts').length;
+                },
+                get filteredSalesAlerts() {
+                    let list = this.salesAlerts || [];
+                    const q = (this.salesAlertSearch || '').toLowerCase().trim();
+                    if (q) {
+                        list = list.filter(a => 
+                            (a.summary_plain || '').toLowerCase().includes(q) ||
+                            (a.code || '').toLowerCase().includes(q) ||
+                            (a.component || '').toLowerCase().includes(q)
+                        );
+                    }
+                    if (this.salesAlertStatusFilter !== 'all') {
+                        list = list.filter(a => a.status === this.salesAlertStatusFilter);
+                    }
+                    if (this.salesAlertSeverityFilter !== 'all') {
+                        list = list.filter(a => a.severity === this.salesAlertSeverityFilter);
+                    }
+                    return list;
+                },
+                get filteredDevAlerts() {
+                    let list = this.devAlerts || [];
+                    const q = (this.devAlertSearch || '').toLowerCase().trim();
+                    if (q) {
+                        list = list.filter(a => {
+                            const inSummary = (a.summary_plain || '').toLowerCase().includes(q);
+                            const inDetail = (a.technical_detail || '').toLowerCase().includes(q);
+                            const inCode = (a.code || '').toLowerCase().includes(q);
+                            const inComp = (a.component || '').toLowerCase().includes(q);
+                            const inTb = (a.traceback || '').toLowerCase().includes(q);
+                            const inCtx = JSON.stringify(a.context || {}).toLowerCase().includes(q);
+                            return inSummary || inDetail || inCode || inComp || inTb || inCtx;
+                        });
+                    }
+                    if (this.devCategoryFilter !== 'all') {
+                        list = list.filter(a => a.category === this.devCategoryFilter);
+                    }
+                    if (this.devAlertStatusFilter !== 'all') {
+                        list = list.filter(a => a.status === this.devAlertStatusFilter);
+                    }
+                    if (this.devAlertSeverityFilter !== 'all') {
+                        list = list.filter(a => a.severity === this.devAlertSeverityFilter);
+                    }
+                    return list;
+                },
+
                 get leaderboard() {
                     const metrics = this.leaderboardMetrics || [];
                     let mapped = this.salesPool.map(rep => {
@@ -1984,7 +3329,9 @@
                 editingRowIdx: null,
                 isAddModalOpen: false,
                 isHandoffTableModalOpen: false,
-                formData: { platform: 'WhatsApp', client_name: '', external_id: '', slack_channel_id: '', paused: false, salesRowToPause: '' },
+                isChannelCannotBeResumedModalOpen: false,
+                channelBlockedModalMessage: '',
+                formData: { platform: 'WhatsApp', client_name: '', external_id: '', slack_channel_name: '', current_slack_channel_id: '', paused: false, salesRowToPause: '' },
 
                 isAddRepModalOpen: false,
                 repFormData: { name: '', slack_user_id: '', active: true },
@@ -2010,7 +3357,7 @@
                     if (this.isAuthenticated) {
                         // Settle the two hero counters once both lists land,
                         // so the first paint shows real numbers, not zeros.
-                        await Promise.all([
+                        const promises = [
                             this.fetchDeliveryMappings(),
                             this.fetchSalesLeads(),
                             this.fetchSalesPool(),
@@ -2018,9 +3365,14 @@
                             this.fetchBlocklist(),
                             this.fetchSnippets(),
                             this.fetchLeaderboard(),
-                        ]);
+                            this.fetchSalesAlerts(),
+                        ];
+                        if (this.isAdmin) {
+                            promises.push(this.fetchDevData());
+                            promises.push(this.fetchDashboardUsers());
+                        }
+                        await Promise.all(promises);
                         this.syncStatCounters();
-
                         this.fetchHealth();
                     }
                     // Background health and 5-minute auth heartbeat check
@@ -2030,6 +3382,18 @@
                             this.checkAuth();
                         }
                     }, 10000);
+
+                    // Real-time alert polling every 30 s.
+                    // Sales alerts run for every user so the nav badge stays current.
+                    // Dev alerts only refresh when an admin is actively on that view
+                    // to avoid fetching large technical payloads in the background.
+                    setInterval(() => {
+                        if (!this.isAuthenticated) return;
+                        this.fetchSalesAlerts();
+                        if (this.isAdmin && this.currentView === 'dev_alerts') {
+                            this.fetchDevAlerts();
+                        }
+                    }, 30000);
                 },
 
                 async checkAuth() {
@@ -2039,15 +3403,26 @@
                         if (data.authenticated) {
                             this.isAuthenticated = true;
                             this.currentUser = data.user || '';
+                            this.userRole = data.role || 'sales';
+                            if (!this.isAdmin && (this.currentView === 'developers' || this.currentView === 'users' || this.currentView === 'dev_alerts')) {
+                                this.currentView = 'leads';
+                                this.activeTag = 'sales';
+                            }
                         } else {
                             if (this.isAuthenticated) {
-                                this.showToast('Session expired after 5 minutes. Please log in.');
+                                this.showToast('Session expired. Please log in.');
                             }
                             this.isAuthenticated = false;
                             this.currentUser = '';
+                            this.userRole = 'sales';
+                            if (this.currentView === 'developers' || this.currentView === 'users' || this.currentView === 'dev_alerts') {
+                                this.currentView = 'leads';
+                                this.activeTag = 'sales';
+                            }
                         }
                     } catch (e) {
                         this.isAuthenticated = false;
+                        this.userRole = 'sales';
                     } finally {
                         this.authChecking = false;
                     }
@@ -2070,6 +3445,11 @@
                         if (data.success) {
                             this.isAuthenticated = true;
                             this.currentUser = data.user || this.loginForm.id;
+                            this.userRole = data.role || 'sales';
+                            if (!this.isAdmin && (this.currentView === 'developers' || this.currentView === 'users' || this.currentView === 'dev_alerts')) {
+                                this.currentView = 'leads';
+                                this.activeTag = 'sales';
+                            }
                             this.showToast(`Welcome back, ${this.currentUser}!`);
                             this.loginForm = { id: '', password: '' };
                             this.fetchDeliveryMappings();
@@ -2079,7 +3459,12 @@
                             this.fetchBlocklist();
                             this.fetchSnippets();
                             this.fetchLeaderboard();
+                            this.fetchSalesAlerts();
                             this.fetchHealth();
+                            if (this.isAdmin) {
+                                this.fetchDevData();
+                                this.fetchDashboardUsers();
+                            }
                         } else {
                             this.authError = data.error || 'Invalid credentials';
                         }
@@ -2096,7 +3481,532 @@
                     } catch (e) {}
                     this.isAuthenticated = false;
                     this.currentUser = '';
+                    this.userRole = 'sales';
+                    this.currentView = 'delivery';
+                    this.activeTag = 'delivery';
                     this.showToast('Logged out successfully');
+                },
+
+                // Developer management methods (Admin only)
+                async fetchDevData() {
+                    if (!this.isAdmin) return;
+                    this.devLoading = true;
+                    try {
+                        await Promise.all([
+                            this.fetchAlertChannels(),
+                            this.fetchDevRoster(),
+                            this.fetchDevPMs(),
+                            this.fetchDevErrorChannel(),
+                            this.fetchDevAlerts()
+                        ]);
+                    } finally {
+                        this.devLoading = false;
+                    }
+                },
+                getChannelDisplayName(channelId) {
+                    const found = this.alertChannels.find(c => c.channel_id === channelId);
+                    return found && found.channel_name ? '#' + found.channel_name : (channelId || '');
+                },
+                openAddDevModal() {
+                    this.devFormData = {
+                        name: '',
+                        slack_user_id: '',
+                        active: true,
+                        channel_ids: this.alertChannels.map(c => c.channel_id)
+                    };
+                    this.isAddDevModalOpen = true;
+                },
+                toggleSelectAllChannels() {
+                    if (this.devFormData.channel_ids.length === this.alertChannels.length) {
+                        this.devFormData.channel_ids = [];
+                    } else {
+                        this.devFormData.channel_ids = this.alertChannels.map(c => c.channel_id);
+                    }
+                },
+                async fetchAlertChannels() {
+                    if (!this.isAdmin) return;
+                    try {
+                        const res = await fetch('/api/developers/alert-channels');
+                        const data = await res.json();
+                        if (data.success) {
+                            this.alertChannels = data.channels || [];
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch alert channels:', e);
+                    }
+                },
+                async submitAddChannel() {
+                    if (!this.isAdmin) return;
+                    if (!this.channelFormData.channel_name && !this.channelFormData.channel_id) {
+                        this.showToast('Please provide a channel name or channel ID');
+                        return;
+                    }
+                    try {
+                        const res = await fetch('/api/developers/alert-channels', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.channelFormData)
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.showToast(data.message || 'Alert channel added');
+                            this.isAddChannelModalOpen = false;
+                            this.channelFormData = { channel_name: '', channel_id: '' };
+                            await this.fetchAlertChannels();
+                            this.fetchDevRoster();
+                        } else {
+                            this.showToast(data.error || 'Failed to add alert channel');
+                        }
+                    } catch (e) {
+                        this.showToast('Error adding alert channel');
+                    }
+                },
+                async deleteAlertChannel(ch) {
+                    if (!this.isAdmin || !confirm(`Remove #${ch.channel_name || ch.channel_id} from alert channels? Alerts will no longer route to this channel.`)) return;
+                    try {
+                        const res = await fetch(`/api/developers/alert-channels/${ch.channel_id}`, { method: 'DELETE' });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.showToast(data.message || 'Alert channel removed');
+                            await this.fetchAlertChannels();
+                            this.fetchDevRoster();
+                        } else {
+                            this.showToast(data.error || 'Failed to remove alert channel');
+                        }
+                    } catch (e) {
+                        this.showToast('Error removing alert channel');
+                    }
+                },
+                async syncSpecificChannel(channel_id) {
+                    if (!this.isAdmin) return;
+                    try {
+                        const res = await fetch(`/api/developers/alert-channels/${channel_id}/sync`, { method: 'POST' });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.showToast(`Channel synchronized with assigned developers`);
+                            await this.fetchAlertChannels();
+                            this.fetchDevRoster();
+                        } else {
+                            this.showToast(data.error || 'Failed to sync channel');
+                        }
+                    } catch (e) {
+                        this.showToast('Error syncing channel');
+                    }
+                },
+                async fetchDevRoster() {
+                    if (!this.isAdmin) return;
+                    try {
+                        const res = await fetch('/api/developers/roster');
+                        const data = await res.json();
+                        if (data.success) {
+                            this.devRoster = data.data || [];
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch developers roster:', e);
+                    }
+                },
+                async fetchDevPMs() {
+                    if (!this.isAdmin) return;
+                    try {
+                        const res = await fetch('/api/developers/project-managers');
+                        const data = await res.json();
+                        if (data.success) {
+                            this.devProjectManagers = data.data || [];
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch project managers:', e);
+                    }
+                },
+                async fetchDevErrorChannel() {
+                    if (!this.isAdmin) return;
+                    try {
+                        const res = await fetch('/api/developers/error-channel');
+                        const data = await res.json();
+                        if (data.success) {
+                            this.devErrorChannel = data;
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch error channel status:', e);
+                    }
+                },
+                async fetchSalesAlerts() {
+                    this.salesAlertsLoading = true;
+                    try {
+                        const res = await fetch('/api/alerts?include_acknowledged=true');
+                        const data = await res.json();
+                        if (data.success) {
+                            this.salesAlerts = data.alerts || data.data || [];
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch sales alerts:', e);
+                    } finally {
+                        this.salesAlertsLoading = false;
+                    }
+                },
+                async ackSalesAlert(alertId) {
+                    try {
+                        const res = await fetch(`/api/alerts/${alertId}/ack`, { method: 'POST' });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.showToast('Alert marked as acknowledged.');
+                            const alert = this.salesAlerts.find(a => a.id === alertId);
+                            if (alert) {
+                                alert.status = 'acknowledged';
+                                alert.acknowledged_by = this.currentUser || 'You';
+                                alert.acknowledged_at = new Date().toISOString().replace('T', ' ').substring(0, 19);
+                            }
+                        } else {
+                            this.showToast(data.error || 'Failed to acknowledge alert');
+                        }
+                    } catch (e) {
+                        this.showToast('Error acknowledging alert');
+                    }
+                },
+                async fetchDevAlerts() {
+                    if (!this.isAdmin) return;
+                    this.devLoading = true;
+                    try {
+                        const res = await fetch('/api/developers/alerts');
+                        const data = await res.json();
+                        if (data.success) {
+                            this.devAlerts = data.alerts || data.data || [];
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch developer alerts:', e);
+                    } finally {
+                        this.devLoading = false;
+                    }
+                },
+                async resolveDevAlert(alertId) {
+                    if (!this.isAdmin) return;
+                    try {
+                        const res = await fetch(`/api/developers/alerts/${alertId}/resolve`, { method: 'POST' });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.showToast('Alert resolved.');
+                            const alert = this.devAlerts.find(a => a.id === alertId);
+                            if (alert) {
+                                alert.status = 'resolved';
+                            }
+                            const sAlert = this.salesAlerts.find(a => a.id === alertId);
+                            if (sAlert) {
+                                sAlert.status = 'resolved';
+                            }
+                        } else {
+                            this.showToast(data.error || 'Failed to resolve alert');
+                        }
+                    } catch (e) {
+                        this.showToast('Error resolving alert');
+                    }
+                },
+                async deleteSalesAlert(alertId) {
+                    if (!confirm('Permanently delete this alert? This cannot be undone.')) return;
+                    try {
+                        const res = await fetch(`/api/alerts/${alertId}`, { method: 'DELETE' });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.salesAlerts = this.salesAlerts.filter(a => a.id !== alertId);
+                            this.showToast('Alert deleted.');
+                        } else {
+                            this.showToast(data.error || 'Failed to delete alert.');
+                        }
+                    } catch (e) {
+                        this.showToast('Error deleting alert.');
+                    }
+                },
+                async deleteDevAlert(alertId) {
+                    if (!this.isAdmin) return;
+                    if (!confirm('Permanently delete this alert? This cannot be undone.')) return;
+                    try {
+                        const res = await fetch(`/api/developers/alerts/${alertId}`, { method: 'DELETE' });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.devAlerts = this.devAlerts.filter(a => a.id !== alertId);
+                            this.salesAlerts = this.salesAlerts.filter(a => a.id !== alertId);
+                            this.showToast('Alert deleted.');
+                        } else {
+                            this.showToast(data.error || 'Failed to delete alert.');
+                        }
+                    } catch (e) {
+                        this.showToast('Error deleting alert.');
+                    }
+                },
+                toggleTraceback(alertId) {
+                    this.expandedTracebacks[alertId] = !this.expandedTracebacks[alertId];
+                },
+                toggleContext(alertId) {
+                    this.expandedContexts[alertId] = !this.expandedContexts[alertId];
+                },
+                copyToClipboard(text, msg = 'Copied to clipboard!') {
+                    if (!text) return;
+                    navigator.clipboard.writeText(text);
+                    this.showToast(msg);
+                },
+                copyFullDiagnostic(alert) {
+                    const lines = [
+                        `# BitLink Alert Diagnostic Report`,
+                        `- Code: ${alert.code}`,
+                        `- Component: ${alert.component}`,
+                        `- Severity: ${alert.severity}`,
+                        `- Status: ${alert.status}`,
+                        `- Occurrences: ${alert.occurrences}`,
+                        `- First Seen: ${alert.created_at}`,
+                        `- Last Seen: ${alert.last_seen_at}`,
+                        `- Plain Summary: ${alert.summary_plain}`,
+                        `- Technical Detail: ${alert.technical_detail || 'None'}`,
+                        ``,
+                        `## Context Payload`,
+                        '```json',
+                        JSON.stringify(alert.context || {}, null, 2),
+                        '```',
+                    ];
+                    if (alert.traceback) {
+                        lines.push(``, `## Traceback`, '```python', alert.traceback, '```');
+                    }
+                    this.copyToClipboard(lines.join('\n'), 'Diagnostic bundle copied to clipboard!');
+                },
+                async syncErrorChannel() {
+                    if (!this.isAdmin) return;
+                    try {
+                        const res = await fetch('/api/developers/error-channel/sync', { method: 'POST' });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.showToast('Error channel synchronized with developer roster');
+                            this.fetchDevErrorChannel();
+                        } else {
+                            this.showToast(data.error || 'Failed to sync error channel');
+                        }
+                    } catch (e) {
+                        this.showToast('Error syncing channel');
+                    }
+                },
+                async toggleDevActive(dev) {
+                    if (!this.isAdmin) return;
+                    try {
+                        const targetActive = !dev.active;
+                        const res = await fetch(`/api/developers/roster/${dev.row_idx}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ active: targetActive })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            dev.active = targetActive;
+                            this.showToast(data.message || (targetActive ? `${dev.name} activated` : `${dev.name} excluded from error channel`));
+                        } else {
+                            this.showToast(data.error || 'Failed to update developer');
+                        }
+                    } catch (e) {
+                        this.showToast('Error updating developer');
+                    }
+                },
+                async deleteDeveloper(dev) {
+                    if (!this.isAdmin || !confirm(`Remove ${dev.name} from developers? This will exclude them from all alert channels.`)) return;
+                    try {
+                        const res = await fetch(`/api/developers/roster/${dev.row_idx}`, { method: 'DELETE' });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.showToast(data.message || `Removed ${dev.name} and excluded from all alert channels`);
+                            this.fetchDevRoster();
+                        } else {
+                            this.showToast(data.error || 'Failed to remove developer');
+                        }
+                    } catch (e) {
+                        this.showToast('Error removing developer');
+                    }
+                },
+                async submitAddDeveloper() {
+                    if (!this.isAdmin || !this.devFormData.name || !this.devFormData.slack_user_id) return;
+                    try {
+                        const res = await fetch('/api/developers/roster', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.devFormData)
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            if (data.warning) {
+                                this.showToast(data.warning);
+                            } else if (data.sync && data.sync.skipped && data.sync.skipped.length > 0) {
+                                const skipErr = data.sync.skipped[0].error || 'Slack invite failed';
+                                this.showToast(`Added ${this.devFormData.name}, but Slack invite failed: ${skipErr}`);
+                            } else {
+                                this.showToast(`Added ${this.devFormData.name} to developers & Slack channels`);
+                            }
+                            this.isAddDevModalOpen = false;
+                            this.devFormData = { name: '', slack_user_id: '', active: true, channel_ids: [] };
+                            this.fetchDevRoster();
+                            this.fetchAlertChannels();
+                        } else {
+                            this.showToast(data.error || 'Failed to add developer');
+                        }
+                    } catch (e) {
+                        this.showToast('Error adding developer');
+                    }
+                },
+                async togglePmActive(pm) {
+                    if (!this.isAdmin) return;
+                    try {
+                        const res = await fetch(`/api/developers/project-managers/${pm.row_idx}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ active: !pm.active })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            pm.active = !pm.active;
+                            this.showToast(`Updated status for ${pm.name}`);
+                        } else {
+                            this.showToast(data.error || 'Failed to update PM');
+                        }
+                    } catch (e) {
+                        this.showToast('Error updating PM');
+                    }
+                },
+                async deletePm(pm) {
+                    if (!this.isAdmin || !confirm(`Remove ${pm.name} from project managers?`)) return;
+                    try {
+                        const res = await fetch(`/api/developers/project-managers/${pm.row_idx}`, { method: 'DELETE' });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.showToast(`Removed ${pm.name}`);
+                            this.fetchDevPMs();
+                        } else {
+                            this.showToast(data.error || 'Failed to remove PM');
+                        }
+                    } catch (e) {
+                        this.showToast('Error removing PM');
+                    }
+                },
+                async submitAddPm() {
+                    if (!this.isAdmin || !this.pmFormData.name || !this.pmFormData.slack_user_id) return;
+                    try {
+                        const res = await fetch('/api/developers/project-managers', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.pmFormData)
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.showToast(`Added ${this.pmFormData.name} to project managers`);
+                            this.isAddPmModalOpen = false;
+                            this.pmFormData = { name: '', slack_user_id: '', active: true };
+                            this.fetchDevPMs();
+                        } else {
+                            this.showToast(data.error || 'Failed to add PM');
+                        }
+                    } catch (e) {
+                        this.showToast('Error adding PM');
+                    }
+                },
+
+                // Dashboard Users Methods (Admin Only)
+                async fetchDashboardUsers() {
+                    if (!this.isAdmin) return;
+                    try {
+                        const res = await fetch('/api/users');
+                        const data = await res.json();
+                        if (data.success) {
+                            this.dashboardUsers = data.users || [];
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch dashboard users:', e);
+                    }
+                },
+                openAddUserModal() {
+                    this.userFormData = { username: '', password: '', role: 'sales' };
+                    this.isAddUserModalOpen = true;
+                },
+                async submitAddUser() {
+                    if (!this.isAdmin || !this.userFormData.username || !this.userFormData.password) {
+                        this.showToast('Username and password are required');
+                        return;
+                    }
+                    try {
+                        const res = await fetch('/api/users', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.userFormData)
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.showToast(data.message || `User ${this.userFormData.username} created`);
+                            this.isAddUserModalOpen = false;
+                            this.userFormData = { username: '', password: '', role: 'sales' };
+                            await this.fetchDashboardUsers();
+                        } else {
+                            this.showToast(data.error || 'Failed to create user');
+                        }
+                    } catch (e) {
+                        this.showToast('Error creating user');
+                    }
+                },
+                async toggleUserRole(u) {
+                    if (!this.isAdmin) return;
+                    const targetRole = u.role === 'admin' ? 'sales' : 'admin';
+                    if (!confirm(`Change role of user "${u.id}" to ${targetRole.toUpperCase()}?`)) return;
+                    try {
+                        const res = await fetch(`/api/users/${encodeURIComponent(u.id)}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ role: targetRole })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            u.role = targetRole;
+                            this.showToast(data.message || `Updated role for ${u.id}`);
+                            await this.fetchDashboardUsers();
+                            if (u.id === this.currentUser) {
+                                await this.checkAuth();
+                            }
+                        } else {
+                            this.showToast(data.error || 'Failed to update user role');
+                        }
+                    } catch (e) {
+                        this.showToast('Error updating role');
+                    }
+                },
+                openResetPasswordModal(u) {
+                    this.resetPasswordData = { user_id: u.id, password: '' };
+                    this.isResetPasswordModalOpen = true;
+                },
+                async submitResetPassword() {
+                    if (!this.isAdmin || !this.resetPasswordData.password) {
+                        this.showToast('Password cannot be empty');
+                        return;
+                    }
+                    try {
+                        const res = await fetch(`/api/users/${encodeURIComponent(this.resetPasswordData.user_id)}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ password: this.resetPasswordData.password })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.showToast(data.message || 'Password updated');
+                            this.isResetPasswordModalOpen = false;
+                            this.resetPasswordData = { user_id: '', password: '' };
+                        } else {
+                            this.showToast(data.error || 'Failed to update password');
+                        }
+                    } catch (e) {
+                        this.showToast('Error updating password');
+                    }
+                },
+                async deleteUser(u) {
+                    if (!this.isAdmin || !confirm(`Permanently delete dashboard user "${u.id}"? This cannot be undone.`)) return;
+                    try {
+                        const res = await fetch(`/api/users/${encodeURIComponent(u.id)}`, { method: 'DELETE' });
+                        const data = await res.json();
+                        if (data.success) {
+                            this.showToast(data.message || `Deleted user ${u.id}`);
+                            await this.fetchDashboardUsers();
+                        } else {
+                            this.showToast(data.error || 'Failed to delete user');
+                        }
+                    } catch (e) {
+                        this.showToast('Error deleting user');
+                    }
                 },
 
                 showToast(message) {
@@ -2377,10 +4287,10 @@
                         client_name: lead.client_name || '',
                         external_id: lead.external_id || '',
                         slack_channel_name: '',
-                        slack_channel_id: '',
+                        current_slack_channel_id: '',
                         paused: false,
-                        // Handoff auto-pauses the sales lead by external_id server-side.
-                        salesRowToPause: ''
+                        sales_lead_id: lead.id || lead.row_idx || '',
+                        salesRowToPause: lead.id || lead.row_idx || ''
                     };
                     this.editMode = false;
                     this.isAddModalOpen = true;
@@ -2389,7 +4299,7 @@
                 openAddModal() {
                     this.editMode = false;
                     this.editingRowIdx = null;
-                    this.formData = { platform: 'WhatsApp', client_name: '', external_id: '', slack_channel_name: '', slack_channel_id: '', paused: false, salesRowToPause: '' };
+                    this.formData = { platform: 'WhatsApp', client_name: '', external_id: '', slack_channel_name: '', current_slack_channel_id: '', paused: false, salesRowToPause: '' };
                     this.isAddModalOpen = true;
                 },
 
@@ -2400,7 +4310,8 @@
                         platform: item.platform || 'WhatsApp',
                         client_name: item.client_name || '',
                         external_id: item.external_id || '',
-                        slack_channel_id: item.slack_channel_id || '',
+                        slack_channel_name: '',
+                        current_slack_channel_id: item.slack_channel_id || '',
                         paused: item.paused || false
                     };
                     this.isAddModalOpen = true;
@@ -2429,6 +4340,7 @@
                             this.showToast(this.editMode ? `Client "${this.formData.client_name}" updated!` : `Client "${this.formData.client_name}" added!`);
                             this.isAddModalOpen = false;
                             await this.fetchDeliveryMappings();
+                            await this.fetchSalesLeads();
 
                         } else {
                             this.showToast(json.error || 'Failed to save client');
@@ -2468,10 +4380,26 @@
                 },
 
                 async toggleLeadPause(lead) {
+                    if (lead.paused) {
+                        // User is trying to activate a paused sales channel
+                        const isHandedOver = Boolean(lead.delivery_handed_off) || 
+                            this.deliveryMappings.some(m => 
+                                String(m.external_id).trim() === String(lead.external_id).trim() ||
+                                (lead.slack_channel_id && String(m.slack_channel_id).trim() === String(lead.slack_channel_id).trim())
+                            );
+                        if (isHandedOver) {
+                            this.channelBlockedModalMessage = "Channel cannot be resumed: Client has been handed over to delivery.";
+                            this.isChannelCannotBeResumedModalOpen = true;
+                            alert("Channel cannot be resumed");
+                            return;
+                        }
+                    }
+
                     lead.paused = !lead.paused;
                     try {
                         const res = await fetch(`/api/sales/leads/${lead.external_id}`, {
                             method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ paused: lead.paused, row_idx: lead.row_idx })
                         });
                         const json = await res.json();
@@ -2479,10 +4407,17 @@
                             this.showToast(`${lead.client_name} is now ${lead.paused ? 'Paused' : 'Active'}`);
                         } else {
                             lead.paused = !lead.paused; // revert on failure
-                            alert("Error: " + (json.error || 'Failed to update lead'));
+                            if (json.error && json.error.toLowerCase().includes("cannot be resumed")) {
+                                this.channelBlockedModalMessage = json.error;
+                                this.isChannelCannotBeResumedModalOpen = true;
+                                alert("Channel cannot be resumed");
+                            } else {
+                                alert("Error: " + (json.error || 'Failed to update lead'));
+                            }
                         }
                     } catch (e) {
                         lead.paused = !lead.paused; // revert on failure
+                        this.showToast('Network error updating lead', true);
                     }
                 },
 

@@ -15,6 +15,7 @@ from datetime import datetime
 import json
 import pathlib
 import uuid
+from typing import Optional
 
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
@@ -39,7 +40,9 @@ from slack_sdk.errors import SlackApiError
 import sales_provisioner
 import sales_store
 import db_store
+import critical_alerts
 import ai_prompts
+import traceback
 import gemini_client
 import sales_insights
 from slack_format import for_client
@@ -126,6 +129,7 @@ whatsapp_to_slack_map = {}
 slack_to_whatsapp_map = {}
 slack_to_whatsapp_msg_map = BoundedMessageMap(max_size=50000, ttl_hours=48)
 wa_to_slack_map = BoundedMessageMap(max_size=50000, ttl_hours=48)  # reverse: wa_msg_id -> {channel, ts}
+posted_bridge_slack_events = deque(maxlen=2000)
 thread_pool = ThreadPoolExecutor(max_workers=20)
 slack_bot_user_id = None
 slack_bot_id = None
@@ -273,6 +277,10 @@ def _set_emergency_stop(active: bool):
             "🛑 EMERGENCY STOP ENGAGED - all WhatsApp traffic halted. "
             "Inbound messages will be discarded and nothing will be sent to customers."
         )
+        _report("EMERGENCY_STOP_ON",
+                "Client intake is paused. Client messages are not being delivered.",
+                "The kill switch engaged; all WhatsApp traffic is halted.",
+                {"client_key": "emergency_stop"})
     else:
         emergency_stop.clear()
         snap = emergency_snapshot()
@@ -282,6 +290,14 @@ def _set_emergency_stop(active: bool):
             f"discarded while stopped and {snap.get('outbound_blocked', 0)} "
             f"outbound send(s) were blocked."
         )
+        _report("EMERGENCY_STOP_OFF",
+                "Client intake has resumed.",
+                f"The kill switch was released. {snap.get('inbound_dropped', 0)} inbound "
+                f"message(s) were discarded and {snap.get('outbound_blocked', 0)} "
+                f"outbound send(s) were blocked while stopped.",
+                {"client_key": "emergency_stop", "inbound_dropped": snap.get("inbound_dropped", 0),
+                 "outbound_blocked": snap.get("outbound_blocked", 0)},
+                severity="info")
         held = snap.get("outbox_held", 0)
         if held:
             # Be explicit: releasing the stop re-arms the outbox, so anything
@@ -596,6 +612,7 @@ def reload_config():
                     "lid": None,
                     "slack_channel_id": lead.get("slack_channel_id"),
                     "paused": str(lead.get("paused", False)).strip().lower() in ["true", "1", "yes"],
+                    "delivery_handed_off": bool(lead.get("delivery_handed_off")),
                     "type": "sales"
                 })
     except Exception as e:
@@ -628,8 +645,8 @@ def reload_config():
                 whatsapp_to_slack_map[item["whatsapp_chat_id"]] = item
             slack_to_whatsapp_map[item["slack_channel_id"]] = item
 
-        # Step B: Register Delivery Mappings on top
-        for item in delivery_mappings:
+        # Step B: Register Delivery Mappings on top (active mappings registered last to win inbound routing)
+        for item in sorted(delivery_mappings, key=lambda m: 1 if not m.get("paused") else 0):
             if item.get("whatsapp_chat_id"):
                 whatsapp_to_slack_map[item["whatsapp_chat_id"]] = item
             if item.get("lid"):
@@ -668,8 +685,84 @@ def send_to_slack_with_retry(action, max_retries=3, delay_seconds=5, **kwargs):
     
     # If the loop finishes without returning True, all retries have failed
     logging.error(f"Failed to send to Slack after {max_retries} attempts.")
+    _report("SLACK_POST_EXHAUSTED",
+            "Messages to the team channel are not going through.",
+            f"{getattr(action, '__name__', 'slack_action')} failed after {max_retries} "
+            f"attempts. kwargs keys: {sorted(kwargs.keys())}",
+            {"client_key": f"exhausted:{getattr(action, '__name__', 'slack_action')}"})
     return False
     
+def _report(code: str, summary_plain: str, technical_detail: str, context: dict,
+            severity: str = "critical", tb_text: Optional[str] = None) -> None:
+    """Push a bridge failure to the developer channel.
+
+    Wrapped so that alerting can never become the reason the bridge stops. Any
+    error inside critical_alerts is already swallowed there; this is the second
+    layer that keeps this call from disturbing the poller's own control flow.
+    """
+    try:
+        critical_alerts.report(code=code, severity=severity, component="whatsapp_bridge",
+                               summary_plain=summary_plain, technical_detail=technical_detail,
+                               context=context, key=context.get("client_key"), tb_text=tb_text)
+    except Exception as e:
+        logging.error(f"Alert reporting for {code} failed: {e}")
+
+
+def _current_traceback() -> Optional[str]:
+    """traceback of the exception being handled, or None when there is not one.
+
+    critical_alerts would otherwise call traceback.format_exc() itself, but only
+    when tb_text is left unset; passing 'NoneType: None' through explicitly would
+    overwrite a real traceback on a repeat of the same alert.
+    """
+    return traceback.format_exc() if sys.exc_info()[0] is not None else None
+
+
+def _alert_slack_forward_failed(display_name, chat_id, event_id, slack_channel,
+                                exc: Exception, has_media: bool) -> None:
+    _report("SLACK_FORWARD_FAILED",
+            f"A message from {display_name} could not be delivered to the team channel.",
+            f"{type(exc).__name__}: {getattr(exc, 'response', {}).get('error', exc)}",
+            {"display_name": display_name, "chat_id": chat_id, "event_id": event_id,
+             "slack_channel": slack_channel, "had_media": bool(has_media),
+             "client_key": str(chat_id)},
+            tb_text=traceback.format_exc())
+
+
+def _alert_media_upload_failed(display_name, chat_id, event_id, slack_channel,
+                               exc: Exception) -> None:
+    _report("MEDIA_UPLOAD_FAILED",
+            f"A file from {display_name} could not be processed.",
+            f"{type(exc).__name__}: {getattr(exc, 'response', {}).get('error', exc)}",
+            {"display_name": display_name, "chat_id": chat_id, "event_id": event_id,
+             "slack_channel": slack_channel, "client_key": str(chat_id)},
+            tb_text=traceback.format_exc())
+
+
+def _alert_poller_error(exc: Exception) -> None:
+    _report("POLLER_LOOP_ERROR",
+            "The WhatsApp connection is unstable and may have dropped a message.",
+            f"{type(exc).__name__}: {exc}",
+            {"client_key": "poller"},
+            tb_text=traceback.format_exc())
+
+
+def _post_text_without_media(web_client: WebClient, slack_channel: str,
+                             display_name: str, message_text: str) -> None:
+    """Deliver a client's text when their attachment could not be processed."""
+    try:
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": message_text}}]
+        web_client.chat_postMessage(channel=slack_channel,
+                                    text=f"{display_name}: {message_text}",
+                                    blocks=blocks, username=display_name,
+                                    icon_emoji=":bust_in_silhouette:")
+        logging.info(f"Forwarded text from '{display_name}' without its attachment")
+    except SlackApiError as e:
+        logging.error(f"Slack also rejected the text-only fallback for '{display_name}': "
+                      f"{e.response.get('error')}")
+        _alert_slack_forward_failed(display_name, "", "", slack_channel, e, False)
+
+
 def poll_whatsapp_and_forward(web_client: WebClient):
     logging.info("WhatsApp polling worker has started.")
     while not stop_event.is_set():
@@ -689,6 +782,11 @@ def poll_whatsapp_and_forward(web_client: WebClient):
                         f"🛑 Emergency stop: discarded {len(new_messages)} inbound WhatsApp "
                         f"message(s). Clients cannot reach the team while stopped."
                     )
+                    _report("EMERGENCY_INBOUND_DROPPED",
+                            f"{len(new_messages)} client message(s) were not delivered "
+                            f"because intake is paused.",
+                            f"Emergency stop discarded {len(new_messages)} inbound message(s).",
+                            {"client_key": "emergency_stop", "dropped": len(new_messages)})
                 time.sleep(1)
                 continue
 
@@ -706,36 +804,63 @@ def poll_whatsapp_and_forward(web_client: WebClient):
                         continue
 
                     if chat_id not in current_clients:
-                        sender_name = msg.get('senderName')
-                        logging.info(f"WA-IN NEW LEAD: chat_id={chat_id!r} (sender={sender_name}). Triggering Sales Provisioner...")
-                        provision_res = sales_provisioner.provision_whatsapp_lead(msg, web_client)
-                        status = provision_res.get("status")
-
-                        if status in ["provisioned", "deduplicated"]:
-                            slack_channel = provision_res.get("channel_id")
-                            client_info = provision_res.get("lead") or {
-                                "client_name": provision_res.get("channel_name", f"sale-wa-{chat_id}"),
+                        # Check if client belongs to Delivery
+                        delivery_rec = db_store.find_delivery_mapping_by_external_id(chat_id)
+                        if delivery_rec and delivery_rec.get("slack_channel_id"):
+                            del_ch = delivery_rec["slack_channel_id"]
+                            client_info = {
+                                "client_name": delivery_rec.get("client_name", "Client"),
                                 "platform": "whatsapp",
                                 "whatsapp_chat_id": chat_id,
                                 "external_id": chat_id,
-                                "slack_channel_id": slack_channel,
-                                "paused": False
+                                "slack_channel_id": del_ch,
+                                "paused": delivery_rec.get("paused", False),
+                                "type": "delivery"
                             }
-                            # Register in-memory mappings immediately for zero-drop real-time routing
                             with config_lock:
                                 whatsapp_to_slack_map[chat_id] = client_info
-                                slack_to_whatsapp_map[slack_channel] = client_info
+                                slack_to_whatsapp_map[del_ch] = client_info
                                 current_clients[chat_id] = client_info
-                            logging.info(f"✅ Real-time mapping established: {chat_id} <-> {slack_channel}")
+                            logging.info(f"✅ Routed incoming WhatsApp message from delivery client {chat_id} directly to Delivery channel {del_ch}")
                         else:
-                            logging.info(f"Lead intake status for {chat_id}: {status}. Skipping forward.")
-                            continue
+                            sender_name = msg.get('senderName')
+                            logging.info(f"WA-IN NEW LEAD: chat_id={chat_id!r} (sender={sender_name}). Triggering Sales Provisioner...")
+                            provision_res = sales_provisioner.provision_whatsapp_lead(msg, web_client)
+                            status = provision_res.get("status")
+
+                            if status in ["provisioned", "deduplicated"]:
+                                slack_channel = provision_res.get("channel_id")
+                                client_info = provision_res.get("lead") or {
+                                    "client_name": provision_res.get("channel_name", f"sale-wa-{chat_id}"),
+                                    "platform": "whatsapp",
+                                    "whatsapp_chat_id": chat_id,
+                                    "external_id": chat_id,
+                                    "slack_channel_id": slack_channel,
+                                    "paused": False
+                                }
+                                # Register in-memory mappings immediately for zero-drop real-time routing
+                                with config_lock:
+                                    whatsapp_to_slack_map[chat_id] = client_info
+                                    slack_to_whatsapp_map[slack_channel] = client_info
+                                    current_clients[chat_id] = client_info
+                                logging.info(f"✅ Real-time mapping established: {chat_id} <-> {slack_channel}")
+                            else:
+                                logging.info(f"Lead intake status for {chat_id}: {status}. Skipping forward.")
+                                continue
                     processed_whatsapp_events.append(event_id)
                     client_info = current_clients[chat_id]
                     slack_channel = client_info["slack_channel_id"]
-                    # Check paused status before forwarding
-                    if client_info.get('paused', False):
-                        logging.info(f"Channel {slack_channel} is paused. Skipping forwarding.")
+
+                    # Check delivery handoff & paused status before forwarding
+                    if client_info.get('type') == 'sales':
+                        if client_info.get('delivery_handed_off') or db_store.is_client_in_delivery(chat_id):
+                            logging.info(f"Sales channel {slack_channel} is handed off to delivery. Inbound message not forwarded to sales channel.")
+                            continue
+                        if client_info.get('paused', False):
+                            logging.info(f"Sales channel {slack_channel} is paused. Skipping forwarding.")
+                            continue
+                    elif client_info.get('paused', False):
+                        logging.info(f"Delivery channel {slack_channel} is paused. Skipping forwarding.")
                         continue
 
                     sender_name = msg.get('senderName')
@@ -779,10 +904,26 @@ def poll_whatsapp_and_forward(web_client: WebClient):
                         if has_media:
                             file_content = base64.b64decode(msg['media']['data'])
                             # Step 1: Upload file without sharing it to a channel
-                            upload_resp = web_client.files_upload_v2(
-                                content=file_content, 
-                                filename=msg['media'].get('filename', 'file.bin')
-                            )
+                            try:
+                                upload_resp = web_client.files_upload_v2(
+                                    content=file_content, 
+                                    filename=msg['media'].get('filename', 'file.bin')
+                                )
+                            except SlackApiError as e:
+                                # An unsupported file type raises here. Because upload
+                                # and channel-post share one try, letting this propagate
+                                # used to take the whole message down with it, losing the
+                                # client's text as well as the file. Post the text on its
+                                # own and record why the attachment is missing.
+                                logging.error(f"Slack media upload failed for '{display_name}': "
+                                              f"{e.response.get('error')}")
+                                _alert_media_upload_failed(display_name, chat_id, event_id,
+                                                           slack_channel, e)
+                                if message_text.strip():
+                                    _post_text_without_media(web_client, slack_channel,
+                                                             display_name, message_text)
+                                    record_client_message_for_sla(slack_channel)
+                                continue
                             file_url = upload_resp.get("file", {}).get("permalink")
                             
                             # Step 2: Append the file permalink with invisible text so it unfurls without showing the ugly URL
@@ -804,8 +945,10 @@ def poll_whatsapp_and_forward(web_client: WebClient):
                                 unfurl_media=True
                             )
                             slack_ts = resp.get("ts")
-                            if slack_ts and event_id:
-                                wa_to_slack_map.set(event_id, {"channel": slack_channel, "ts": slack_ts})
+                            if slack_ts:
+                                posted_bridge_slack_events.append((slack_channel, slack_ts))
+                                if event_id:
+                                    wa_to_slack_map.set(event_id, {"channel": slack_channel, "ts": slack_ts})
                         else:
                             notification_text = f"{display_name}: {content}"
                             message_blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": message_text}}]
@@ -817,19 +960,26 @@ def poll_whatsapp_and_forward(web_client: WebClient):
                                 icon_emoji=":bust_in_silhouette:",
                             )
                             slack_ts = resp.get("ts")
-                            if slack_ts and event_id:
-                                wa_to_slack_map.set(event_id, {"channel": slack_channel, "ts": slack_ts})
+                            if slack_ts:
+                                posted_bridge_slack_events.append((slack_channel, slack_ts))
+                                if event_id:
+                                    wa_to_slack_map.set(event_id, {"channel": slack_channel, "ts": slack_ts})
                         # Record incoming client message timestamp for SLA silence watch timer
                         record_client_message_for_sla(slack_channel)
                         # Check and dispatch Sunday-only auto-reply if today is Sunday
                         handle_sunday_autoreply(chat_id, slack_channel, web_client)
                         logging.info(f"Forwarded WhatsApp message from '{display_name}' to Slack")
                     except SlackApiError as e:
+                        # The message is dropped here and polling continues, with no
+                        # record that it was ever lost. Report it before it vanishes.
                         logging.error(f"Slack API error forwarding from '{display_name}': {e.response['error']}")
+                        _alert_slack_forward_failed(display_name, chat_id, event_id,
+                                                   slack_channel, e, has_media)
 
             time.sleep(0.5)
         except Exception as e:
             logging.error(f"Poller loop error, continuing in 5s: {e}")
+            _alert_poller_error(e)
             time.sleep(5)
     logging.info("WhatsApp polling worker is shutting down.")
 
@@ -881,46 +1031,69 @@ def handle_slack_message(client: SocketModeClient, req, web_client: WebClient):
     if event.get("type") != "message":
         return
 
+    channel_id = event.get("channel")
+    ts = event.get("ts")
     bot_id = event.get("bot_id")
     user_id = event.get("user")
     subtype = event.get("subtype")
     text = event.get("text") or ""
+    username = event.get("username")
+    icons = event.get("icons", {})
 
-    # 1. Block self-echoes from this WhatsApp bridge bot
-    if bot_id and slack_bot_id and bot_id == slack_bot_id:
-        return
-    if user_id and slack_bot_user_id and user_id == slack_bot_user_id:
+    # 1. Block any message that has username set (messages forwarded to Slack on behalf of external clients)
+    if username:
+        logging.debug(f"[SKIP ECHO] Dropping message with username='{username}' ch={channel_id}")
         return
 
-    # 2. Check for bot messages
-    if bot_id:
+    # 2. Block icons that indicate a bridged client message
+    if icons and isinstance(icons, dict):
+        emoji = icons.get("emoji", "")
+        if emoji in [":bust_in_silhouette:", ":robot_face:"]:
+            logging.debug(f"[SKIP ECHO] Dropping message with bridge icon '{emoji}' ch={channel_id}")
+            return
+
+    # 3. Block self-echoes from this and all known bridge bots
+    KNOWN_BRIDGE_BOT_IDS = {slack_bot_id, "B0C3FBURUE9", "B0C3L7FGLRY"} - {None}
+    KNOWN_BRIDGE_USER_IDS = {slack_bot_user_id, "U0C3E3DRC9H", "U0C3L7FKA7L"} - {None}
+    if bot_id and bot_id in KNOWN_BRIDGE_BOT_IDS:
+        return
+    if user_id and user_id in KNOWN_BRIDGE_USER_IDS:
+        return
+
+    # 4. Block messages whose (channel, ts) were posted by the bridge
+    if (channel_id, ts) in posted_bridge_slack_events:
+        return
+
+    # 5. Check for bot messages: ONLY allow the Manager Bot (for AI replies / snippets)
+    if bot_id or subtype == "bot_message":
+        master_bot_user_id = os.getenv("MASTER_SLACK_BOT_ID")
         is_manager = False
         if manager_bot_id and bot_id == manager_bot_id:
             is_manager = True
         elif manager_bot_user_id and user_id == manager_bot_user_id:
             is_manager = True
-        elif not manager_bot_id and bot_id != slack_bot_id:
-            # Fallback if manager identity wasn't dynamically resolved
+        elif master_bot_user_id and (user_id == master_bot_user_id or bot_id == master_bot_user_id):
             is_manager = True
 
         if not is_manager:
-            logging.debug(f"[SKIP] bot_id={bot_id} user={user_id} (not manager bot) ch={event.get('channel')}")
+            logging.debug(f"[SKIP] bot_id={bot_id} user={user_id} subtype={subtype} (not authorized manager bot) ch={channel_id}")
             return
 
         # Ensure we don't forward internal Manager Bot admin notifications
         if any(marker in text for marker in [
             "Lead Claimed:", "Lead Handed Off:", "New WhatsApp Lead", "Sales Summary", "Claim Lead"
         ]):
-            logging.info(f"[SKIP] Ignoring internal Manager Bot notification in ch={event.get('channel')}")
+            logging.info(f"[SKIP] Ignoring internal Manager Bot notification in ch={channel_id}")
             return
 
-    # 3. Only allow valid message subtypes (normal messages have subtype None, files have file_share, bot messages have bot_message)
+    # 6. Only allow valid message subtypes (normal messages have subtype None, files have file_share, bot messages have bot_message)
     if subtype and subtype not in ["file_share", "bot_message"]:
-        logging.debug(f"[SKIP] bot_id={bot_id} subtype={subtype} ch={event.get('channel')}")
+        logging.debug(f"[SKIP] bot_id={bot_id} subtype={subtype} ch={channel_id}")
         return
 
-    channel_id = event.get("channel")
-    ts = event.get("ts")
+    if not channel_id or not ts:
+        return
+
     event_key = (channel_id, ts)
 
     with config_lock:
@@ -952,7 +1125,28 @@ def process_slack_to_whatsapp(event, bot_token):
                 return
             mapping = slack_to_whatsapp_map[channel_id]
 
-        # Two-way blocking: check paused status
+        whatsapp_chat_id = mapping.get("whatsapp_chat_id") or mapping.get("external_id") or mapping.get("lid")
+
+        # Two-way blocking: check if client was handed over to delivery
+        is_handed_off = bool(mapping.get('delivery_handed_off', False))
+        if not is_handed_off and mapping.get('type') == 'sales':
+            is_handed_off = db_store.is_client_in_delivery(whatsapp_chat_id)
+
+        if is_handed_off:
+            logging.info(f"Sales channel {channel_id} is handed over to delivery. Blocking Slack-to-WhatsApp message.")
+            web_client = WebClient(token=bot_token)
+            try:
+                web_client.chat_postMessage(
+                    channel=channel_id,
+                    thread_ts=slack_ts,
+                    text="*Info:* This client has been handed over to delivery. The sales channel is permanently paused and cannot send or receive messages. Please communicate via the delivery channel.",
+                    username="Bitlink Bridge Info"
+                )
+            except Exception as e:
+                logging.error(f"Failed to post handoff info message to Slack: {e}")
+            return
+
+        # Check paused status
         if mapping.get('paused', False):
             logging.info(f"Channel {channel_id} is paused. Blocking Slack-to-WhatsApp message.")
             web_client = WebClient(token=bot_token)
@@ -972,17 +1166,17 @@ def process_slack_to_whatsapp(event, bot_token):
         # Cleaned up front so both the file-caption branch below and the
         # text-only branch get real emoji instead of Slack :shortcodes:.
         text_caption = clean_slack_links(event.get("text", ""))
-        
+
+        # '!!' prefix: message must remain in the channel and must not forward to the client
+        if text_caption.strip().startswith('!!'):
+            logging.info(f"[NOTE '!!'] Message kept in Slack channel {channel_id}, not forwarded to WhatsApp: \"{text_caption[:60]}\"")
+            return
+
         with open("process_debug.log", "a") as f:
             f.write(f"Preparing to send message to {whatsapp_chat_id} (Client: {client_name})\n")
             f.write(f"Text caption: {text_caption}\n")
             
         logging.info(f"Preparing to send message to {whatsapp_chat_id} (Client: {client_name})")
-
-        # dev prefix: post to Slack only, don't forward to WhatsApp
-        if text_caption.strip().startswith('dev '):
-            logging.info(f"[DEV] \"{text_caption[:60]}\" kept in Slack, not forwarded")
-            return
 
         # --- Case 1: The message has files ---
         if "files" in event and event["files"]:
@@ -1180,7 +1374,7 @@ def sync_slack_downtime_messages(web_client: WebClient):
                     continue
 
                 text = msg.get("text", "")
-                if text.strip().startswith("dev "):
+                if text.strip().startswith("!!"):
                     continue
 
                 if slack_to_whatsapp_msg_map.get(ts):
@@ -1441,7 +1635,9 @@ def generate_and_post_sales_digest(web_client: WebClient, target_channel: str = 
             if uid:
                 active_pool[uid] = str(rep.get("name", "")).strip()
 
-        now = datetime.now()
+        # Day boundaries are Pakistan days, so the digest's "today" matches the
+        # business day the team is actually in.
+        now = _now_pkt()
         today_str = now.strftime("%Y-%m-%d")
 
         new_leads_24h = 0
@@ -1548,6 +1744,14 @@ def generate_and_post_sales_digest(web_client: WebClient, target_channel: str = 
             blocks=blocks
         )
         logging.info(f"📢 [SALES DIGEST] Successfully posted digest to channel {dest_channel}")
+        # Recorded here, not by the caller, so every route that sends a digest
+        # (scheduler and manual trigger alike) counts against the same daily
+        # allowance and none of them can produce a second digest the same day.
+        if not db_store.set_setting(DIGEST_LAST_DAY_KEY, today_str,
+                                    note="Last day the daily sales digest was posted (PKT)"):
+            logging.warning(
+                "⚠️ Digest was posted but the once-a-day marker could not be saved; "
+                "the digest may be sent again until this succeeds.")
         return True
     except Exception as e:
         logging.error(f"Error generating sales digest: {e}", exc_info=True)
@@ -1618,22 +1822,63 @@ def _parse_digest_time(raw):
     return hour, minute
 
 
+# The digest is scheduled against Pakistan time, not whatever the host happens
+# to be set to. A UTC host would otherwise fire the 09:00 digest at 14:00 PKT.
+# Pakistan has no daylight saving, so the fixed +05:00 fallback below is exactly
+# equivalent to Asia/Karachi and needs no tzdata installed.
+try:
+    from zoneinfo import ZoneInfo
+
+    DIGEST_TZ = ZoneInfo("Asia/Karachi")
+except Exception:  # pragma: no cover - only when tzdata is unavailable
+    from datetime import timedelta, timezone as _tz
+
+    DIGEST_TZ = _tz(timedelta(hours=5), "PKT")
+
+# Persisted in the settings table rather than a local variable, so restarting
+# the bridge cannot make the scheduler forget it already sent today's digest.
+DIGEST_LAST_DAY_KEY = "digest_last_posted_day"
+
+
+def _now_pkt() -> datetime:
+    """Current time in Pakistan, regardless of how the host is configured."""
+    return datetime.now(DIGEST_TZ)
+
+
 def daily_sales_digest_worker(web_client: WebClient):
     """Feature #32: Background Daily Sales Digest Scheduler.
 
-    Posts the digest once per day at or after the configured digest_time.
+    Posts the digest at most once per day, at or after the configured
+    digest_time, evaluated in Pakistan time.
+
+    The "already sent today" marker lives in the settings table rather than in
+    a local variable. It used to be local, which meant every bridge restart
+    started the day from scratch and re-sent the digest — the observed symptom
+    being two or three digests a day plus one whenever the script was started
+    after the scheduled time. Reading the marker from the database on each pass
+    makes the schedule survive restarts.
+
+    A digest that would have been due while the bridge was not running is
+    skipped, not sent late. Firing hours after the configured time is worse
+    than not firing at all, so a bridge that starts after digest_time waits for
+    tomorrow instead of posting a stale digest on its first pass.
     """
-    logging.info("📊 Daily Sales Digest scheduler initialized and active.")
-    last_posted_day = None
+    logging.info("📊 Daily Sales Digest scheduler initialized and active "
+                 f"(Pakistan time, currently {_now_pkt().strftime('%H:%M')}).")
+
+    # Anything due before this instant is treated as deliberately missed: a
+    # bridge started after digest_time must not fire a late digest for that day.
+    started_at = _now_pkt()
 
     while not stop_event.is_set():
+        wait_seconds = 60
         try:
             settings = db_store.get_sales_settings()
             if not settings.get("digest_enabled", True):
                 stop_event.wait(60)
                 continue
 
-            now = datetime.now()
+            now = _now_pkt()
             today_str = now.strftime("%Y-%m-%d")
             configured = _parse_digest_time(settings.get("digest_time", "09:00"))
             if configured is None:
@@ -1644,13 +1889,70 @@ def daily_sales_digest_worker(web_client: WebClient):
                 stop_event.wait(300)
                 continue
 
-            current_hhmm = now.strftime("%H:%M")
-            if current_hhmm >= f"{configured[0]:02d}:{configured[1]:02d}" and last_posted_day != today_str:
-                if generate_and_post_sales_digest(web_client):
-                    last_posted_day = today_str
+            last_posted_day = db_store.get_setting(DIGEST_LAST_DAY_KEY).strip()
+            if last_posted_day == today_str:
+                stop_event.wait(60)
+                continue
+
+            # Compare whole timestamps, not minutes-since-midnight: a worker
+            # started yesterday must still fire today's digest, which a bare
+            # minutes comparison would get wrong.
+            due_at = now.replace(hour=configured[0], minute=configured[1],
+                                 second=0, microsecond=0)
+
+            if now >= due_at:
+                if started_at <= due_at:
+                    generate_and_post_sales_digest(web_client)
+                else:
+                    logging.info(
+                        f"⏰ Skipping today's digest: bridge started at "
+                        f"{started_at.strftime('%H:%M')}, after digest_time "
+                        f"{settings.get('digest_time')}. Next digest at the "
+                        f"next configured time."
+                    )
+            else:
+                # Not due yet: sleep right up to the scheduled minute so the
+                # digest goes out on time rather than up to a minute late.
+                remaining = (due_at - now).total_seconds()
+                if 0 < remaining < wait_seconds:
+                    wait_seconds = remaining
 
         except Exception as e:
             logging.error(f"Error in daily sales digest worker: {e}")
+
+        stop_event.wait(wait_seconds)
+
+
+def auto_archive_worker(web_client: WebClient):
+    """Background thread that runs the auto-archive job once per day at 03:00.
+
+    Reads ``archive_after_days`` from settings (default 30) and archives any
+    Slack channels whose deal was closed or handed to delivery beyond that
+    threshold.  Runs independently of sales_ai_jobs.py so the feature is always
+    active as long as the WhatsApp bridge is running.
+
+    Shares the digest scheduler's persisted per-day marker and Pakistan clock,
+    for the same reason: a local ``last_run_day`` resets on every restart, so
+    the job used to re-archive every time the bridge was restarted after 03:00.
+    """
+    from sales_ai_jobs import run_auto_archive_job
+    logging.info("🗄️ Auto-Archive worker initialized (runs daily at 03:00 PKT).")
+    last_key = "auto_archive_last_run_day"
+
+    while not stop_event.is_set():
+        try:
+            now = _now_pkt()
+            today_str = now.strftime("%Y-%m-%d")
+            if db_store.get_setting(last_key).strip() == today_str:
+                stop_event.wait(60)
+                continue
+            # Fire once per day at or after 03:00
+            if now.hour * 60 + now.minute >= 3 * 60:
+                run_auto_archive_job(web_client=web_client)
+                db_store.set_setting(last_key, today_str,
+                                     note="Last day auto-archive ran (PKT)")
+        except Exception as e:
+            logging.error(f"[AUTO-ARCHIVE] Worker error: {e}")
 
         stop_event.wait(60)
 
@@ -1886,6 +2188,7 @@ def main():
     # ported from the `add-ons` branch.
     thread_pool.submit(sla_silence_watcher, web_client)
     thread_pool.submit(daily_sales_digest_worker, web_client)
+    thread_pool.submit(auto_archive_worker, web_client)
     def raw_event_logger(client, req):
         try:
             with open("raw_slack_events.log", "a") as f:
@@ -1903,6 +2206,19 @@ def main():
     socket_client.socket_mode_request_listeners.append(
         lambda client, req: handle_slack_edit_event(client, req, web_client)
     )
+    # Handle interactive events (button clicks on lead welcome cards, modal submissions)
+    # These arrive on the WhatsApp bridge socket because the buttons were posted by this bot.
+    try:
+        import bitlink_manager
+        socket_client.socket_mode_request_listeners.append(
+            lambda client, req: bitlink_manager.handle_slack_block_actions(client, req, web_client) if req.type == "interactive" else None
+        )
+        socket_client.socket_mode_request_listeners.append(
+            lambda client, req: bitlink_manager.handle_modal_submission(client, req, web_client) if req.type == "interactive" else None
+        )
+        logging.info("✅ Registered interactive event handlers (block_actions, modal_submissions) on WhatsApp bridge socket.")
+    except Exception as e:
+        logging.error(f"Failed to register interactive handlers from bitlink_manager: {e}")
     logging.info("Connecting to Slack and entering listener loop...")
     socket_client.connect()
     thread_pool.submit(sync_slack_downtime_messages, web_client)
@@ -1911,6 +2227,7 @@ def main():
         time.sleep(1)
 
 if __name__ == "__main__":
+    critical_alerts.install_excepthook("whatsapp_bridge")
     try:
         main()
     except KeyboardInterrupt:
