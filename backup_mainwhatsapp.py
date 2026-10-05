@@ -116,8 +116,7 @@ def get_enhanced_message(chat_history, raw_draft):
     """Calls the Google Gemini API to get the rewritten message without project context."""
     try:
         # If you hardcoded your key for testing, it would go here.
-        # Otherwise, this uses the key from your .env file.
-        genai.configure(api_key="AIzaSyA6PymEguEq_HpR1enCnDJORNZkQsXR51E")
+        genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-pro-latest')
 
         # This is the new, simplified prompt without the project context
