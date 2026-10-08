@@ -3,6 +3,9 @@ FROM node:20-alpine
 
 WORKDIR /app/whatsapp-bot
 
+# Increase Node memory heap limit for large file transfers
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
 # Install dependencies first (better layer caching)
 COPY whatsapp-bot/package*.json ./
 RUN npm install --production

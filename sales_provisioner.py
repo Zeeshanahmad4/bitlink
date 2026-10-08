@@ -518,12 +518,15 @@ def provision_whatsapp_lead(
     owner_slack_id, owner_name = assign_round_robin_owner()
 
     sender_name = msg.get("senderName") or "New Client"
+    group_name = msg.get("groupName") or msg.get("groupSubject")
+    is_group = msg.get("isGroup") or external_id.endswith("@g.us")
+    lead_name = group_name if (is_group and group_name) else sender_name
 
     # 3. Create Slack Channel (using fetched Lead Name) & Invite Member Pool
     channel_id, channel_name, invited_ids = provision_slack_channel_with_pool(
         external_id=external_id,
         web_client=web_client,
-        lead_name=sender_name,
+        lead_name=lead_name,
         is_private=is_private,
         platform="whatsapp"
     )
@@ -532,7 +535,7 @@ def provision_whatsapp_lead(
 
     # 4. Record Lead in CRM
     lead_record = record_new_lead_in_crm(
-        client_name=sender_name,
+        client_name=lead_name,
         channel_name=channel_name,
         external_id=external_id,
         slack_channel_id=channel_id,
@@ -616,12 +619,15 @@ def provision_telegram_lead(
     owner_slack_id, owner_name = assign_round_robin_owner()
 
     sender_name = msg.get("senderName") or "New Telegram Lead"
+    group_name = msg.get("groupName") or msg.get("groupSubject")
+    is_group = msg.get("isGroup") or str(external_id).startswith("-")
+    lead_name = group_name if (is_group and group_name) else sender_name
 
     # 3. Create Slack Channel (using fetched Lead Name) & Invite Member Pool
     channel_id, channel_name, invited_ids = provision_slack_channel_with_pool(
         external_id=external_id,
         web_client=web_client,
-        lead_name=sender_name,
+        lead_name=lead_name,
         is_private=is_private,
         platform="telegram"
     )
@@ -630,7 +636,7 @@ def provision_telegram_lead(
 
     # 4. Record Lead in CRM
     lead_record = record_new_lead_in_crm(
-        client_name=sender_name,
+        client_name=lead_name,
         channel_name=channel_name,
         external_id=external_id,
         slack_channel_id=channel_id,

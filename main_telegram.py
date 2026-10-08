@@ -601,6 +601,11 @@ async def handle_send_message(request):
         if not recipient_id or not text:
             return web.Response(status=400, text="Missing recipient_id or text")
 
+        # Global Blocklist Check (Outbound)
+        if sales_store.is_external_id_blocked(str(recipient_id)):
+            logging.warning(f"🛡️ [BLOCKLIST] Telegram recipient {recipient_id} is in BLOCKLIST. Outbound message dropped.")
+            return web.Response(status=403, text="Recipient is blocked in blocklist.")
+
         # Use asyncio.create_task to send without blocking the server
         asyncio.create_task(telethon_client.send_message(int(recipient_id), text))
 
@@ -744,25 +749,26 @@ async def handle_telegram_message(event):
 
     if chat_id not in telegram_to_slack_map:
         # Provision telegram lead
+        sender_name = "Unknown"
+        group_name = None
+        try:
+            sender = await event.get_sender()
+            sender_name = _resolve_sender_name(sender) or "Unknown"
+        except Exception:
+            pass
+
+        chat = getattr(event, "chat", None)
+        if chat and hasattr(chat, "title") and chat.title:
+            group_name = chat.title
+
         msg_dict = {
             "chatId": chat_id,
             "senderId": chat_id,
-            "senderName": "Unknown",
+            "senderName": sender_name,
+            "groupName": group_name,
+            "isGroup": event.is_group or event.is_channel or str(chat_id).startswith("-"),
             "body": event.text or ""
         }
-        try:
-            sender = await event.get_sender()
-            resolved_name = _resolve_sender_name(sender)
-            if resolved_name:
-                msg_dict["senderName"] = resolved_name
-            else:
-                chat = getattr(event, "chat", None)
-                if isinstance(chat, types.User):
-                    msg_dict["senderName"] = getattr(chat, "first_name", None) or chat_id
-                else:
-                    msg_dict["senderName"] = getattr(chat, "title", None) or chat_id
-        except Exception:
-            pass
 
         loop = asyncio.get_running_loop()
 
@@ -1403,9 +1409,9 @@ async def process_slack_event_async(event: dict, bot_token: str):
                     logging.error(f"No download URL for file {filename}")
                     continue
 
-                MAX_FILE_SIZE = 50 * 1024 * 1024
+                MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", 500)) * 1024 * 1024
                 if filesize > MAX_FILE_SIZE:
-                    warn_msg = f"⚠️ File transfer failed: `{filename}` ({filesize / 1024 / 1024:.1f} MB) exceeds the 50 MB limit."
+                    warn_msg = f"⚠️ File transfer failed: `{filename}` ({filesize / 1024 / 1024:.1f} MB) exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit."
                     await slack_client.chat_postMessage(channel=channel_id, thread_ts=ts, text=warn_msg)
                     continue
 
@@ -1422,7 +1428,7 @@ async def process_slack_event_async(event: dict, bot_token: str):
                         async with aiohttp_session.get(
                             file_url,
                             headers={"Authorization": f"Bearer {tok}"},
-                            timeout=aiohttp.ClientTimeout(total=60)
+                            timeout=aiohttp.ClientTimeout(total=300)
                         ) as resp:
                             if resp.status == 200:
                                 file_data = await resp.read()

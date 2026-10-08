@@ -1,0 +1,13 @@
+.git
+.venv
+venv/
+node_modules/
+*.log
+*.jsonl
+whatsapp_outbox.jsonl
+temp_downloads_telegram/
+raw_slack_events.log
+slack_events.log
+main_whatsapp3.log
+process_debug.log
+.DS_Store

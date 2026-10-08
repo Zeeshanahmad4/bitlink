@@ -57,13 +57,14 @@ with the dashboard exposed publicly over HTTPS via **DuckDNS** (free domain) and
 | 8 | [First-time logins (WhatsApp QR + Telegram OTP)](#8-first-time-logins-whatsapp-qr--telegram-otp) |
 | 9 | [Create the dashboard admin user](#9-create-the-dashboard-admin-user) |
 | 10 | [Configure Nginx and get free HTTPS](#10-configure-nginx-and-get-free-https) |
-| 11 | [Seed the Slack apps](#11-seed-the-slack-apps) |
-| 12 | [First-run verification](#12-first-run-verification) |
-| 13 | [Operational commands](#13-operational-commands) |
-| 14 | [Upgrading a running server](#14-upgrading-a-running-server) |
-| 15 | [Optional — migrating existing Google Sheets data](#15-optional--migrating-existing-google-sheets-data) |
-| 16 | [Troubleshooting](#16-troubleshooting) |
-| 17 | [Security notes](#17-security-notes) |
+| 11 | [Progressive Web App (PWA) deployment & caching](#11-progressive-web-app-pwa-deployment--caching) |
+| 12 | [Seed the Slack apps](#12-seed-the-slack-apps) |
+| 13 | [First-run verification](#13-first-run-verification) |
+| 14 | [Operational commands](#14-operational-commands) |
+| 15 | [Upgrading a running server](#15-upgrading-a-running-server) |
+| 16 | [Optional — migrating existing Google Sheets data](#16-optional--migrating-existing-google-sheets-data) |
+| 17 | [Troubleshooting](#17-troubleshooting) |
+| 18 | [Security notes](#18-security-notes) |
 
 ---
 
@@ -94,7 +95,7 @@ Two services are **not** run as containers and are run on-demand:
 | Linux server (Ubuntu 20.04+ / Debian 11+) | Static public IP assumed |
 | WhatsApp number | For the Baileys gateway |
 | Telegram account | For the Telethon bridge |
-| Three Slack apps | See [§11](#11-seed-the-slack-apps) |
+| Three Slack apps | See [§12](#12-seed-the-slack-apps) |
 | DuckDNS account | Free at [duckdns.org](https://www.duckdns.org) |
 | SSH access to the server | With `sudo` privileges |
 
@@ -174,6 +175,10 @@ docker compose version    # e.g. Docker Compose version v2.x.x
 nginx -v
 ```
 
+> [!NOTE]
+> **PostgreSQL does NOT need to be installed on the host.**
+> PostgreSQL runs in an isolated Docker container (`db: postgres:15-alpine`). Docker automatically creates the database, manages persistence, and runs `schema.sql` on first boot. You do not need to install `postgresql` via `apt`. (If you explicitly prefer running PostgreSQL on the host OS instead of Docker, see [§17.7](#177-running-postgresql-directly-on-the-host-instead-of-docker)).
+
 ---
 
 ## 5. Clone and Deploy from GitHub
@@ -215,6 +220,21 @@ cd /opt/bitlink
 > **Tip for Private Repositories:** If your GitHub repo is private, either:
 > 1. Use a **Personal Access Token (PAT)** when prompted for the password, or
 > 2. Generate an SSH key on the server (`ssh-keygen -t ed25519`) and add the public key as a **Deploy Key** in your GitHub repo settings (**Settings -> Deploy keys**).
+
+### 5.3 Essential `.gitignore` Checklist (What Stays Local/Server-Only)
+
+When cloning BitLink onto your server, the following files and directories are automatically ignored by Git. They contain local secrets, active logins, database backups, logs, or platform dependencies. They are generated dynamically on the server and **MUST NEVER** be committed to GitHub:
+
+| Category | Ignored Paths in `.gitignore` | Purpose & Server Handling |
+|----------|--------------------------------|---------------------------|
+| **Secrets & Env Variables** | `.env`, `.env.local`, `.env.*.local`, `config.py` | Contains database passwords, Slack tokens, Gemini API keys, Telegram API Hash. `.env.example` is committed as a template. On server: `cp .env.example .env` and populate. |
+| **WhatsApp Auth Session** | `whatsapp-bot/auth_info/`, `whatsapp-bot/.wwebjs_auth/`, `whatsapp-bot/sessions/` | Stores active WhatsApp QR pairing keys & auth state. Automatically created on server when scanning QR. |
+| **Telegram Auth Session** | `sessions/`, `*.session`, `telegram_message_map.json` | Stores Telethon session keys and phone authentication. Automatically generated when running interactive login. |
+| **Google Cloud Credentials** | `credentials/`, `service_account.json` | Google Cloud service account JSON private keys (if using Google Sheets migration). Copy manually if needed. |
+| **Database Backups & Dumps** | `backups/`, `*.sql` (except `!schema.sql`) | Contains live SQL data dumps, client records, and password hashes. `schema.sql` (table structure) IS committed. |
+| **Log Files & Queue Outboxes** | `logs/`, `*.log`, `slack_events.log`, `whatsapp_outbox.jsonl`, `telegram_outbox.jsonl`, `*.jsonl` | Real-time message logs, webhook events, and retry queues. Created automatically by running services. |
+| **Dependencies & Virtual Envs** | `node_modules/`, `whatsapp-bot/node_modules`, `__pycache__/`, `venv/`, `.venv/` | Node/Python packages and bytecode. Installed inside Docker containers (`Dockerfile.node` & `Dockerfile.python`). |
+| **OS / Editor Files** | `.DS_Store`, `Thumbs.db`, `temp_downloads_telegram/` | Temporary operating system files and downloaded Telegram media buffers. |
 
 ---
 
@@ -330,6 +350,79 @@ All paths are relative to the container's `/app` working directory. The Docker C
 | `SESSION_NAME` | `bitlink_telegram` | Telethon session basename |
 | `SESSIONS_DIR` | `sessions` | Telegram session directory (mounted volume) |
 
+### 6.9 Dual Credential Workflow: Personal Credentials → Company Credentials
+
+If you want to deploy initially using **your own personal credentials** (for staging/testing) and later switch to **official company credentials** (for production deployment), follow this 2-phase process:
+
+#### Phase A — Staging / Testing Deployment (Personal Credentials)
+1. **Configure `.env`**: Fill `.env` with your personal/test Slack app bot tokens (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`), personal Gemini API key, and test Slack channel IDs (`SLACK_ADMIN_CHANNEL_ID`).
+2. **Scan Personal WhatsApp**: Run `docker compose logs -f gateway` and scan the QR code with your personal phone. Session files save to `./whatsapp-bot/auth_info/`.
+3. **Log in Personal Telegram**: Run `docker compose run --rm tg-bridge python main_telegram.py` and log in with your personal phone number and OTP code. Session files save to `./sessions/bitlink_telegram.session`.
+4. **Test Roster**: In the dashboard (**Member Pool**), add your personal Slack user ID to test lead distribution.
+
+#### Phase B — Migration to Official Company Production Credentials
+
+When testing is complete and you are ready to switch to company credentials:
+
+##### Step 1 — Update `.env` with Company Credentials
+```bash
+nano /opt/bitlink/.env
+```
+Replace personal credentials with official company values:
+- `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` (Company WhatsApp bridge app)
+- `SLACK_BOT_TOKEN_TELEGRAM`, `SLACK_APP_TOKEN_TELEGRAM` (Company Telegram bridge app)
+- `MANAGER_SLACK_BOT_TOKEN`, `MANAGER_SLACK_APP_TOKEN` (Company Manager app)
+- `SLACK_ADMIN_CHANNEL_ID` (Company Slack admin channel)
+- `MASTER_SLACK_BOT_ID` (Company Slack bot ID)
+- `GEMINI_API_KEY` (Company Gemini API key)
+- `DB_PASSWORD` & `DATABASE_URL` (Company database password)
+
+##### Step 2 — Switch WhatsApp Session to Company Phone
+Unlink personal WhatsApp and link the official company WhatsApp phone:
+```bash
+# Delete personal session state
+rm -rf /opt/bitlink/whatsapp-bot/auth_info/*
+
+# Restart gateway to generate new QR code
+docker compose restart gateway
+
+# View logs and scan QR code with the official Company WhatsApp phone
+docker compose logs -f gateway
+```
+
+##### Step 3 — Switch Telegram Session to Company Account
+Unlink personal Telegram and link the official company Telegram phone:
+```bash
+# Stop Telegram bridge container
+docker compose stop tg-bridge
+
+# Remove personal session file
+rm -f /opt/bitlink/sessions/bitlink_telegram.session
+
+# Interactive login using Company Telegram phone number & OTP
+docker compose run --rm tg-bridge python main_telegram.py
+
+# Start Telegram bridge in background
+docker compose up -d tg-bridge
+```
+
+##### Step 4 — Update Roster & Clear Staging Test Data
+```bash
+# Optional: Clear staging test leads and mappings
+docker compose exec db psql -U bitlink -d bitlink -c \
+  "TRUNCATE sales_leads, client_mappings, critical_alerts, alert_details;"
+
+# Clear test sales pool and reset project managers table
+docker compose exec db psql -U bitlink -d bitlink -c "TRUNCATE sales_pool; TRUNCATE project_managers;"
+```
+Then add official company sales reps in the dashboard (**Member Pool → Add Sales Rep**).
+
+##### Step 5 — Force Restart All Services
+```bash
+docker compose down
+docker compose up -d
+```
+
 ---
 
 ## 7. Build and Start All Containers
@@ -345,7 +438,7 @@ docker compose build
 # Start everything in the background
 docker compose up -d
 
-# Confirm all 6 containers are running
+# Confirm all 7 containers are running
 docker compose ps
 ```
 
@@ -359,7 +452,52 @@ bitlink-dashboard-1     Up              127.0.0.1:5050->5050/tcp
 bitlink-wa-bridge-1     Up
 bitlink-tg-bridge-1     Up
 bitlink-slack-manager-1 Up
+bitlink-ai-jobs-1       Up
 ```
+
+### 7.1 Verify Database & Apply Schema / Migrations
+
+The `db` container automatically creates the `bitlink` database on its very first start and runs `/docker-entrypoint-initdb.d/01_schema.sql` (which is mapped to `./schema.sql`).
+
+Follow these steps to confirm everything initialized properly:
+
+#### Step 1 — Check database connectivity
+```bash
+docker compose exec db pg_isready -U bitlink -d bitlink
+```
+Expected output:
+```
+bitlink:5432 - accepting connections
+```
+
+#### Step 2 — Verify all 13 CRM tables exist
+```bash
+docker compose exec db psql -U bitlink -d bitlink -c "\dt"
+```
+You should see all 13 tables listed in the database:
+- `client_mappings`
+- `sales_leads`
+- `sales_pool`
+- `blocklist`
+- `project_managers`
+- `snippets`
+- `settings`
+- `dashboard_users`
+- `developers`
+- `critical_alerts`
+- `alert_details`
+- `alert_channels`
+- `developer_channels`
+
+#### Step 3 — Manually apply or re-run schema / migrations
+If any table is missing, or if you update `schema.sql` in the future with new columns or tables, apply the migration by piping `schema.sql` directly into `psql`:
+
+```bash
+docker compose exec -T db psql -U bitlink -d bitlink < schema.sql
+```
+
+> **Why this is completely safe:**
+> Every query in `schema.sql` uses `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, and `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`. You can run this command at any time — it will apply new tables/indexes without touching or deleting your existing records.
 
 ---
 
@@ -480,8 +618,34 @@ server {
     listen 80;
     server_name mycompany-crm.duckdns.org;
 
-    client_max_body_size 100M;
+    # Redirect all HTTP traffic to HTTPS (Required for PWA & Service Workers)
+    return 301 https://$host$request_uri;
+}
 
+server {
+    listen 443 ssl http2;
+    server_name mycompany-crm.duckdns.org;
+
+    # SSL Certificate Paths (Managed automatically by Certbot / Let's Encrypt)
+    # ssl_certificate /etc/letsencrypt/live/mycompany-crm.duckdns.org/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/mycompany-crm.duckdns.org/privkey.pem;
+
+    # PWA Service Worker (Never cache sw.js, set Service-Worker-Allowed header)
+    location /sw.js {
+        proxy_pass http://127.0.0.1:5050/sw.js;
+        proxy_set_header Host $host;
+        add_header Cache-Control "no-cache";
+        add_header Service-Worker-Allowed "/";
+    }
+
+    # PWA Web Application Manifest
+    location /manifest.json {
+        proxy_pass http://127.0.0.1:5050/manifest.json;
+        proxy_set_header Host $host;
+        add_header Cache-Control "public, max-age=3600";
+    }
+
+    # Main Dashboard Proxy
     location / {
         proxy_pass          http://127.0.0.1:5050;
         proxy_http_version  1.1;
@@ -493,8 +657,9 @@ server {
         proxy_set_header    Upgrade           $http_upgrade;
         proxy_set_header    Connection        "upgrade";
 
-        proxy_read_timeout    300s;
+        proxy_read_timeout    86400s;
         proxy_connect_timeout  10s;
+        client_max_body_size  700M;
     }
 }
 ```
@@ -559,7 +724,118 @@ Log in with `admin` and the password you set in [§9](#9-create-the-dashboard-ad
 
 ---
 
-## 11. Seed the Slack Apps
+## 11. Progressive Web App (PWA) Deployment & Caching
+
+BitLink is built as a **Progressive Web App (PWA)**, allowing users to install the Control Dashboard as a native-like application on Desktop (Windows, macOS, Linux) and Mobile (iOS, Android). It features shell pre-caching, offline page fallbacks, and API error resilience.
+
+### 11.1 PWA Architecture & Assets
+
+| Component | Endpoint | Source File | Purpose |
+|-----------|----------|-------------|---------|
+| **Web App Manifest** | `/manifest.json` | `static/manifest.json` | Defines app name ("BitLink Control Dashboard"), standalone display mode, orientation, app icons, theme colors, and quick launcher shortcuts (`/?view=leads`, `/?view=dev_alerts`). |
+| **Service Worker** | `/sw.js` | `static/sw.js` | Intercepts network requests to serve pre-cached shell assets, stale-while-revalidate static assets, and offline fallback responses. |
+| **Offline Fallback UI** | `/offline.html` | `templates/offline.html` | Rendered automatically when a network connection is unavailable during page navigation. |
+| **App Icons & Touch Assets** | `/static/icons/` | `static/icons/` | High-resolution iconography including 192x192, 512x512, maskable 512x512 PNGs, and 180x180 `apple-touch-icon.png`. |
+
+### 11.2 HTTPS Requirement for Service Workers
+
+> [!IMPORTANT]
+> **Service Workers strictly require HTTPS.**
+> Web browsers block Service Worker registration and PWA installation prompts on unencrypted HTTP connections (exempt only for `localhost`). Ensure HTTPS is active via Let's Encrypt (§10) before testing PWA features in production.
+
+### 11.3 Service Worker (`sw.js`) Caching Strategy
+
+BitLink uses a tailored multi-strategy caching engine in `sw.js`:
+
+1. **Pre-caching Shell (`install` event)**:
+   Pre-loads `/`, `/offline.html`, `/manifest.json`, and core branding icons on initial service worker installation (`skipWaiting()` activated).
+2. **API Requests (`/api/*`) — Network-First**:
+   Always attempts to fetch live data from the backend server first. If the device is offline, returns a clean JSON error response:
+   ```json
+   {
+     "success": false,
+     "offline": true,
+     "error": "You are currently offline. Please check your internet connection."
+   }
+   ```
+3. **HTML Navigation — Network-First with Offline Fallback**:
+   Attempts network navigation and updates cached page copies. If offline and uncached, falls back to `/offline.html`.
+4. **Static Assets (CSS, JS, Fonts, Images) — Stale-While-Revalidate**:
+   Serves the cached copy immediately for sub-millisecond loading, while silently fetching updated assets in the background for future sessions.
+
+### 11.4 Nginx Configuration & Header Rules
+
+To ensure browsers check for Service Worker updates on every page load rather than caching old worker scripts, Nginx must apply `Cache-Control: "no-cache"` and `Service-Worker-Allowed: "/"`:
+
+```nginx
+# Service Worker endpoint (served from control_server.py)
+location /sw.js {
+    proxy_pass http://127.0.0.1:5050/sw.js;
+    proxy_set_header Host $host;
+    add_header Cache-Control "no-cache";
+    add_header Service-Worker-Allowed "/";
+}
+
+# Web App Manifest
+location /manifest.json {
+    proxy_pass http://127.0.0.1:5050/manifest.json;
+    proxy_set_header Host $host;
+    add_header Cache-Control "public, max-age=3600";
+}
+```
+
+### 11.5 Installing BitLink as a Desktop or Mobile App
+
+#### Desktop (Chrome / Edge / Brave / macOS / Windows / Linux)
+1. Open `https://mycompany-crm.duckdns.org` in Chrome or Edge.
+2. Click the **Install BitLink** icon located on the right side of the address bar (or select **Browser Menu → Install BitLink...**).
+3. BitLink runs in a standalone window with native taskbar/dock integration.
+
+#### iOS / iPadOS (Safari)
+1. Open `https://mycompany-crm.duckdns.org` in Safari.
+2. Tap the **Share** button in the navigation bar.
+3. Scroll down and select **Add to Home Screen**.
+4. Tap **Add** in the top right.
+
+#### Android (Chrome)
+1. Open `https://mycompany-crm.duckdns.org` in Chrome.
+2. Tap the three-dot menu icon in the upper right corner.
+3. Select **Add to Home screen** or **Install app**.
+
+### 11.6 Updating PWA Code & Cache Busting
+
+When releasing new versions of the dashboard UI:
+
+1. **Increment `CACHE_NAME` in `static/sw.js`**:
+   ```javascript
+   const CACHE_NAME = 'bitlink-v2'; // Bump version when updating static shell assets
+   ```
+2. **Automatic Legacy Cache Cleanup**:
+   On the next page load, the browser detects the updated `sw.js` (because of `Cache-Control: "no-cache"`). The `activate` hook automatically purges old caches (`bitlink-v1`) and claims active clients (`clients.claim()`).
+
+### 11.7 PWA Verification & Testing
+
+#### Command Line Verification
+```bash
+# Verify Service Worker endpoint and headers
+curl -I https://mycompany-crm.duckdns.org/sw.js
+# Expected: HTTP/2 200, cache-control: no-cache, service-worker-allowed: /
+
+# Verify Manifest endpoint
+curl -I https://mycompany-crm.duckdns.org/manifest.json
+# Expected: HTTP/2 200, content-type: application/manifest+json
+```
+
+#### Chrome DevTools Audit
+1. Open `https://mycompany-crm.duckdns.org` in Chrome.
+2. Open DevTools (`F12` or `Cmd + Option + I`).
+3. Navigate to **Application → Manifest** to inspect branding, icons, and display mode.
+4. Navigate to **Application → Service Workers** to inspect registration state (`Activated and running`).
+5. Run a **Lighthouse** audit under the **Progressive Web App** category to confirm compliance.
+
+---
+
+## 12. Seed the Slack Apps
 
 > **🙋 Manual step — requires your Slack workspace admin access.**
 
@@ -626,9 +902,9 @@ Each line should print a bot username.
 
 ---
 
-## 12. First-Run Verification
+## 13. First-Run Verification
 
-### 12.1 All containers healthy
+### 13.1 All containers healthy
 
 ```bash
 docker compose ps
@@ -636,7 +912,7 @@ docker compose ps
 
 All six containers should show `Up` or `Up (healthy)`.
 
-### 12.2 Dashboard API health
+### 13.2 Dashboard API health
 
 ```bash
 curl -s http://127.0.0.1:5050/api/health | python3 -m json.tool
@@ -644,7 +920,7 @@ curl -s http://127.0.0.1:5050/api/health | python3 -m json.tool
 
 Expect `"status": "ok"` and `"online": true` for `whatsapp_gateway`, `whatsapp_bridge`, and `telegram_bridge`.
 
-### 12.3 Database reachable
+### 13.3 Database reachable
 
 ```bash
 docker compose exec db psql -U bitlink -d bitlink -c "\dt"
@@ -652,11 +928,11 @@ docker compose exec db psql -U bitlink -d bitlink -c "\dt"
 
 You should see 8 tables: `client_mappings`, `sales_leads`, `sales_pool`, `blocklist`, `project_managers`, `snippets`, `settings`, `dashboard_users`.
 
-### 12.4 Log in to the dashboard
+### 13.4 Log in to the dashboard
 
 Open `https://mycompany-crm.duckdns.org` and log in. If you get `Invalid username or password`, re-run [§9](#9-create-the-dashboard-admin-user).
 
-### 12.5 Send a test lead
+### 13.5 Send a test lead
 
 Message the linked WhatsApp number from a different phone. You should see in order:
 
@@ -667,7 +943,7 @@ Message the linked WhatsApp number from a different phone. You should see in ord
 5. A lead row appears in **Sales CRM** assigned round-robin
 6. Replying in that Slack channel delivers to WhatsApp with a ✅ reaction
 
-### 12.6 Seed the sales pool and project managers
+### 13.6 Seed the sales pool and project managers
 
 Both tables start empty.
 
@@ -685,7 +961,7 @@ ON CONFLICT DO NOTHING;
 "
 ```
 
-### 12.7 Scheduled Features: Daily Digest, Sunday Auto-Reply, and AI Insights
+### 13.7 Scheduled Features: Daily Digest, Sunday Auto-Reply, and AI Insights
 
 All three features are **always-on** in the Docker setup — no cron jobs or manual triggers needed.
 
@@ -755,7 +1031,7 @@ docker compose run --rm ai-jobs python sales_ai_jobs.py --archive-now
 
 > **Note on weekly stage inference:** `run_weekly_stage_inference` currently scans all open leads and logs them but the AI stage-update step is stubbed (no actual stage is changed in the database yet). Auto-archive works fully.
 
-### 12.8 AI features (optional)
+### 13.8 AI features (optional)
 
 ```bash
 docker compose exec dashboard python -c "
@@ -766,7 +1042,7 @@ print(gemini_client.call_gemini_api('Reply with the single word: OK'))
 
 ---
 
-## 13. Operational Commands
+## 14. Operational Commands
 
 ### View logs
 
@@ -826,7 +1102,7 @@ docker compose exec dashboard wc -l whatsapp_outbox.jsonl
 
 ---
 
-## 14. Upgrading a Running Server
+## 15. Upgrading a Running Server
 
 ### Step 1 — Back up the database first
 
@@ -861,18 +1137,17 @@ Docker Compose only restarts containers whose image changed. Sessions and databa
 
 ### Step 4 — Check for schema changes
 
-This project has no migration framework. If a release changes `schema.sql`, apply it manually:
+This project has an idempotent schema. If a release updates `schema.sql`, apply the migration manually with:
 
 ```bash
-docker compose exec db psql -U bitlink -d bitlink \
-  -f /app/schema.sql
+docker compose exec -T db psql -U bitlink -d bitlink < schema.sql
 ```
 
 Because all statements use `CREATE TABLE IF NOT EXISTS`, re-running is safe — it adds new tables but does not alter or truncate existing ones.
 
 ---
 
-## 15. Optional — Migrating Existing Google Sheets Data
+## 16. Optional — Migrating Existing Google Sheets Data
 
 **Skip this section for a fresh install.** Only needed if moving from an older BitLink version that stored CRM data in Google Sheets.
 
@@ -890,7 +1165,7 @@ docker compose run --rm dashboard python migrate_sheets_to_pg.py --allow-truncat
 
 ---
 
-## 16. Troubleshooting
+## 17. Troubleshooting
 
 **Dashboard returns 500 on every page.**
 PostgreSQL is unreachable. Check `docker compose ps` — is the `db` container `Up (healthy)`? Check `docker compose logs db` for errors.
@@ -925,7 +1200,7 @@ You probably left `127.0.0.1` in the URL. Inside Docker, use the service hostnam
 The sales pool is empty. Add reps under **Member Pool** in the dashboard.
 
 **Handover creates a channel but no PMs are in it.**
-The `project_managers` table is empty and `PROJECT_MANAGER_SLACK_ID` is not set. See [§12.6](#126-seed-the-sales-pool-and-project-managers).
+The `project_managers` table is empty and `PROJECT_MANAGER_SLACK_ID` is not set. See [§13.6](#136-seed-the-sales-pool-and-project-managers).
 
 **Every message processed twice, Slack rate-limit warnings.**
 A legacy script (`backup_mainwhatsapp.py`, `tele_backup.py`, `management_server.py`) is running and sharing an app token with a live bridge. Do not run those files.
@@ -942,11 +1217,57 @@ nslookup mycompany-crm.duckdns.org
 **SSL certificate expiry.**
 Certbot auto-renews via `certbot.timer`. Verify: `sudo systemctl status certbot.timer`. Force a renewal test: `sudo certbot renew --dry-run`.
 
+**PWA install prompt does not appear or Service Worker fails to register.**
+Service Workers strictly require HTTPS. Ensure Certbot SSL is active (§10) and your server is accessed over `https://`. Verify `/sw.js` returns HTTP 200 with header `Service-Worker-Allowed: /`.
+
+**Dashboard updates or CSS changes not appearing in browser.**
+The Service Worker caches static assets. Increment `CACHE_NAME` in `static/sw.js` (e.g. `bitlink-v1` to `bitlink-v2`) and push changes, or perform a hard refresh (`Ctrl+Shift+R` / `Cmd+Shift+R`).
+
+### 17.7 Running PostgreSQL directly on the Host (Alternative Option)
+
+By default, Docker manages PostgreSQL in the `db` container with zero manual setup. If you instead prefer to install and run PostgreSQL natively on Ubuntu/Debian:
+
+1. **Install PostgreSQL on the host:**
+   ```bash
+   sudo apt update && sudo apt install -y postgresql postgresql-contrib
+   sudo systemctl enable postgresql
+   sudo systemctl start postgresql
+   ```
+
+2. **Create the user, database, and apply schema:**
+   ```bash
+   sudo -u postgres psql -c "CREATE USER bitlink WITH PASSWORD 'your_strong_password';"
+   sudo -u postgres psql -c "CREATE DATABASE bitlink OWNER bitlink;"
+   sudo -u postgres psql -d bitlink -f /opt/bitlink/schema.sql
+   ```
+
+3. **Allow Docker containers to connect to the host PostgreSQL:**
+   Edit `/etc/postgresql/15/main/postgresql.conf` (adjust version number if needed):
+   ```
+   listen_addresses = 'localhost, 172.17.0.1'
+   ```
+   Edit `/etc/postgresql/15/main/pg_hba.conf`:
+   ```
+   host    bitlink    bitlink    172.17.0.0/16    md5
+   ```
+   Restart PostgreSQL:
+   ```bash
+   sudo systemctl restart postgresql
+   ```
+
+4. **Update `/opt/bitlink/.env`:**
+   ```ini
+   DATABASE_URL=postgresql://bitlink:your_strong_password@172.17.0.1:5432/bitlink
+   ```
+
+5. **In `docker-compose.yml`:**
+   Comment out the `db:` container service and remove the `depends_on: - db` lines from Python services.
+
 ---
 
-## 17. Security Notes
+## 18. Security Notes
 
-### 17.1 Pre-launch checklist
+### 18.1 Pre-launch checklist
 
 - [ ] `chmod 600 /opt/bitlink/.env`
 - [ ] Strong unique `DB_PASSWORD` in `.env`
@@ -956,25 +1277,29 @@ Certbot auto-renews via `certbot.timer`. Verify: `sudo systemctl status certbot.
 - [ ] `.env`, `sessions/`, `auth_info/` are in `.gitignore` — never commit them
 - [ ] SSL certificate issued and HTTPS working
 
-### 17.2 The `PORT` variable is a trap
+### 18.2 The `PORT` variable is a trap
 
 `PORT` configures the **WhatsApp Baileys gateway** (`service-baileys.js`), default `3101`. The Flask dashboard reads `CONTROL_DASHBOARD_PORT`, default `5050`. Setting `PORT=5050` makes the gateway fight the dashboard for the same port — one will fail. Always use `CONTROL_DASHBOARD_PORT` for the dashboard.
 
-### 17.3 Dashboard sessions
+### 18.3 Dashboard sessions
 
 The Flask secret key is regenerated on every container restart, so all active sessions are invalidated on redeploy. This is intentional. Sessions expire after 24 hours regardless.
 
-### 17.4 `DASHBOARD_PASSCODE` is inert
+### 18.4 `DASHBOARD_PASSCODE` is inert
 
 `DASHBOARD_PASSCODE` is defined in `control_server.py` but never used as an authentication check. Login is bcrypt-hash-only against `dashboard_users`. Do not rely on it as a second factor.
 
-### 17.5 Database is not exposed to the host
+### 18.5 Database is not exposed to the host
 
 The `db` container does not publish port 5432 to the host. It is reachable only on the internal `bitlink-net` Docker bridge. You cannot connect to it directly from your laptop — use `docker compose exec db psql ...` instead.
 
-### 17.6 Auto-restart on crash and server reboot
+### 18.6 Auto-restart on crash and server reboot
 
 All six containers have `restart: always` in `docker-compose.yml`. If a container crashes, Docker restarts it automatically. If the server reboots, Docker (enabled via `systemctl enable docker`) restarts all containers automatically. **No manual intervention needed for crashes or reboots.**
+
+### 18.7 PWA Service Worker Scope & HTTPS Security
+
+The Service Worker is served with `Service-Worker-Allowed: /` to allow controlling the entire domain scope. Because Service Workers can intercept network calls, HTTPS enforcement (§10) and `Cache-Control: "no-cache"` on `/sw.js` are mandatory security controls to prevent MITM code injection or stale authentication state caching.
 
 ---
 

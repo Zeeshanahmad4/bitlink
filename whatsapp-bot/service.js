@@ -18,7 +18,8 @@ const NOTIFIED_GROUPS_FILE = path.join(__dirname, 'notified_groups.json'); // <-
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
 const SLACK_ADMIN_CHANNEL = process.env.SLACK_ADMIN_CHANNEL_ID;
 const app = express();
-app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.json({ limit: '700mb' }));
+app.use(bodyParser.urlencoded({ limit: '700mb', extended: true }));
 
 function log(...args) {
     const ts = new Date().toISOString().replace('T', ' ').replace('Z', '');
@@ -219,13 +220,25 @@ client.on('message', async (msg) => {
         log("Could not get sender contact:", error);
     }
 
+    let groupName = null;
+    let isGroup = msg.from ? msg.from.endsWith('@g.us') : false;
+    try {
+        const chat = await msg.getChat();
+        if (chat && chat.isGroup) {
+            isGroup = true;
+            groupName = chat.name || null;
+        }
+    } catch (e) {}
+
     const messageData = {
         chatId: msg.from,
         body: msg.body,
         timestamp: msg.timestamp,
         quotedBody: quotedBody,
         messageId: msg.id._serialized,
-        senderName: senderName
+        senderName: senderName,
+        groupName: groupName,
+        isGroup: isGroup
     };
 
     if (msg.hasMedia) {

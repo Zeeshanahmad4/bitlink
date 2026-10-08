@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 import requests
-from flask import Flask, request, jsonify, render_template, session
+from flask import Flask, request, jsonify, render_template, session, send_from_directory, make_response
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -48,6 +48,20 @@ def enable_cors(response):
 def index():
     """Renders the main Control Dashboard web interface."""
     return render_template('index.html')
+
+@app.route('/manifest.json')
+def serve_manifest():
+    return send_from_directory('static', 'manifest.json', mimetype='application/manifest+json')
+
+@app.route('/sw.js')
+def serve_sw():
+    response = make_response(send_from_directory('static', 'sw.js', mimetype='application/javascript'))
+    response.headers['Service-Worker-Allowed'] = '/'
+    return response
+
+@app.route('/offline.html')
+def serve_offline():
+    return render_template('offline.html')
 
 # --- Authentication Endpoints ---
 
@@ -834,8 +848,8 @@ def list_blocklist():
 
 @app.route('/api/sales/blocklist', methods=['POST'])
 def add_to_blocklist():
-    """Adds a phone number or JID to the blocklist."""
-    data = request.get_json(force=True)
+    """Adds a phone number or JID to the blocklist and pauses active client channels."""
+    data = request.get_json(force=True) if request.data else {}
     external_id = str(data.get("external_id", "")).strip()
     reason = str(data.get("reason", "Added via Dashboard")).strip()
     added_at = time.strftime("%Y-%m-%d")
@@ -844,12 +858,14 @@ def add_to_blocklist():
         return jsonify({"success": False, "error": "Missing external_id"}), 400
 
     try:
-        # Idempotency check
-        if external_id in db_store.get_blocklist():
+        # Idempotency check: verify if already blocked
+        if db_store.is_external_id_blocked(external_id):
             return jsonify({"success": False, "error": f"{external_id} is already in the blocklist."}), 409
 
         db_store.add_to_blocklist(external_id, reason, added_at)
-        logging.info(f"Added {external_id} to blocklist (reason: {reason})")
+        # Pause existing channels for this contact (without deleting the contact)
+        db_store.set_lead_paused_by_external_id(external_id, True)
+        logging.info(f"Added {external_id} to blocklist (reason: {reason}) & paused channels")
         return jsonify({"success": True, "message": f"{external_id} added to blocklist."}), 201
     except Exception as e:
         logging.error(f"Error adding to blocklist: {e}")
@@ -858,11 +874,23 @@ def add_to_blocklist():
 
 @app.route('/api/sales/blocklist/<int:row_idx>', methods=['DELETE'])
 def delete_from_blocklist(row_idx: int):
-    """Deletes a blocklist entry by id."""
-    if not db_store.delete_from_blocklist(row_idx):
-        return jsonify({"success": False, "error": f"Blocklist entry {row_idx} not found"}), 404
-    logging.info(f"Removed blocklist entry {row_idx}")
-    return jsonify({"success": True, "message": f"Blocklist entry {row_idx} removed."})
+    """Deletes a blocklist entry by id and resumes channel communication."""
+    try:
+        entry = db_store.get_blocklist_entry_by_id(row_idx)
+        ext_id = entry.get("external_id") if entry else None
+
+        if not db_store.delete_from_blocklist(row_idx):
+            return jsonify({"success": False, "error": f"Blocklist entry {row_idx} not found"}), 404
+
+        # Resume channel communication if contact exists
+        if ext_id:
+            db_store.set_lead_paused_by_external_id(ext_id, False)
+
+        logging.info(f"Removed blocklist entry {row_idx} ({ext_id}) & resumed channels")
+        return jsonify({"success": True, "message": f"Blocklist entry {row_idx} removed & connection resumed."})
+    except Exception as e:
+        logging.error(f"Error removing from blocklist: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 # ==============================================================================
 # SALES: SNIPPETS & LEADERBOARD & AI

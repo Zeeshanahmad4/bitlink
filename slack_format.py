@@ -77,6 +77,32 @@ def to_unicode_emoji(text):
         return text
 
 
+def _format_labelled_link(match):
+    scheme = match.group(1)
+    url_body = match.group(2)
+    label = match.group(3)
+    full_url = f"{scheme}:{url_body}"
+
+    url_without_scheme = re.sub(r'^(?:https?|ftp)://', '', full_url, flags=re.IGNORECASE)
+    clean_label = re.sub(r'[\.\u2026]+$', '', label)
+
+    # 1. Exact match with full_url or url_without_scheme
+    if label in (full_url, url_without_scheme, full_url.rstrip('/'), url_without_scheme.rstrip('/')):
+        return full_url
+
+    # 2. Label is a truncated prefix of full_url or url_without_scheme (Slack auto-shortening)
+    if clean_label and (full_url.startswith(clean_label) or url_without_scheme.startswith(clean_label)):
+        return full_url
+
+    # 3. Label starts with http(s), www, or host domain and matches the start of url_without_scheme
+    domain = url_without_scheme.split('/')[0].split('?')[0].split('#')[0]
+    if label.startswith(('http://', 'https://', 'www.', domain)) and clean_label.startswith(domain):
+        return full_url
+
+    # 4. Otherwise it is a custom text label (e.g. <https://ex.com|the doc>)
+    return label
+
+
 def strip_slack_markup(text):
     """Unwrap Slack's ``<...>`` markup so clients see plain text.
 
@@ -92,7 +118,7 @@ def strip_slack_markup(text):
 
     text = _LABELLED_NON_URL_RE.sub(lambda m: m.group(2), text)
     text = _BARE_NON_URL_RE.sub(lambda m: m.group(2), text)
-    text = _LABELLED_LINK_RE.sub(lambda m: m.group(3), text)
+    text = _LABELLED_LINK_RE.sub(_format_labelled_link, text)
     text = _BARE_LINK_RE.sub(lambda m: f"{m.group(1)}:{m.group(2)}", text)
     text = _LABELLED_CHANNEL_RE.sub(lambda m: f"#{m.group(2)}", text)
     text = _BARE_CHANNEL_RE.sub(lambda m: f"#{m.group(1)}", text)

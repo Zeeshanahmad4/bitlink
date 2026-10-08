@@ -564,6 +564,29 @@ def delete_from_blocklist(entry_id: int) -> bool:
         raise
 
 
+def get_blocklist_entry_by_id(entry_id: int) -> Optional[Dict[str, Any]]:
+    try:
+        row = db.query_one("SELECT id, external_id, reason FROM blocklist WHERE id = %s", (entry_id,))
+        return row
+    except Exception as e:
+        logging.error(f"PG read failed for blocklist entry {entry_id}: {e}")
+        return None
+
+
+def set_lead_paused_by_external_id(external_id: str, paused: bool) -> bool:
+    """Sets paused flag for any lead or delivery client matching external_id."""
+    if not external_id:
+        return False
+    clean = str(external_id).strip()
+    try:
+        db.execute("UPDATE sales_leads SET paused = %s WHERE external_id = %s", (paused, clean))
+        db.execute("UPDATE client_mappings SET paused = %s WHERE external_id = %s", (paused, clean))
+        return True
+    except Exception as e:
+        logging.error(f"Failed setting paused={paused} for external_id {clean}: {e}")
+        return False
+
+
 def is_external_id_blocked(external_id: str, force_refresh: bool = False) -> bool:
     """Exact, numeric, and digits-suffix matching, same semantics as before."""
     if not external_id:

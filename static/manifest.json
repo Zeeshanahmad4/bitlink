@@ -1,0 +1,47 @@
+{
+  "name": "BitLink Control Dashboard",
+  "short_name": "BitLink",
+  "description": "BitLink Sales & Developer Operations Management System",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/static/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/static/icons/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Sales CRM",
+      "short_name": "Sales",
+      "description": "View Sales Leads & Client Conversations",
+      "url": "/?view=leads"
+    },
+    {
+      "name": "Developer Operations",
+      "short_name": "DevOps",
+      "description": "View Developer Alerts & Diagnostics",
+      "url": "/?view=dev_alerts"
+    }
+  ]
+}

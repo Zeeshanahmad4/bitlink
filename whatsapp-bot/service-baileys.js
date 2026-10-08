@@ -16,7 +16,8 @@ const SLACK_ADMIN_CHANNEL = process.env.SLACK_ADMIN_CHANNEL_ID;
 const PORT = process.env.PORT || 3101;
 
 const app = express();
-app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.json({ limit: '700mb' }));
+app.use(bodyParser.urlencoded({ limit: '700mb', extended: true }));
 
 function log(...args) {
     const ts = new Date().toISOString().replace('T', ' ').replace('Z', '');
@@ -32,6 +33,7 @@ let sock = null;
 
 const messageQueue = [];
 const messageStore = new Map();
+const groupSubjectCache = new Map();
 const MAX_STORE_SIZE = 10000;
 
 function storeMessage(msgId, data) {
@@ -233,6 +235,20 @@ function registerMessageHandlers() {
                 participant: msg.key.participant
             });
 
+            let groupName = null;
+            const isGroup = chatId.endsWith('@g.us');
+            if (isGroup) {
+                if (groupSubjectCache.has(chatId)) {
+                    groupName = groupSubjectCache.get(chatId);
+                } else {
+                    const metadata = await sock.groupMetadata(chatId).catch(() => null);
+                    if (metadata && metadata.subject) {
+                        groupName = metadata.subject;
+                        groupSubjectCache.set(chatId, groupName);
+                    }
+                }
+            }
+
             const hasMedia = !!(msg.message?.imageMessage ||
                 msg.message?.videoMessage ||
                 msg.message?.documentMessage ||
@@ -245,7 +261,10 @@ function registerMessageHandlers() {
                         chatId, body,
                         timestamp: msg.messageTimestamp,
                         quotedBody, messageId: msgId,
-                        senderName, media
+                        senderName,
+                        groupName: groupName || null,
+                        isGroup: isGroup,
+                        media
                     });
                     log(`📎 Media message received from ${chatId}: ${media.filename}`);
                 }
@@ -255,14 +274,15 @@ function registerMessageHandlers() {
                     timestamp: msg.messageTimestamp,
                     quotedBody, messageId: msgId,
                     senderName,
+                    groupName: groupName || null,
+                    isGroup: isGroup,
                     media: null
                 });
                 log(`💬 Text message received from ${chatId}: ${body.substring(0, 50)}...`);
             }
 
-            if (chatId.endsWith('@g.us') && !notifiedGroups.has(chatId)) {
-                const metadata = await sock.groupMetadata(chatId).catch(() => null);
-                await handleNewGroup(chatId, metadata?.subject || chatId);
+            if (isGroup && !notifiedGroups.has(chatId)) {
+                await handleNewGroup(chatId, groupName || chatId);
             }
         }
     });

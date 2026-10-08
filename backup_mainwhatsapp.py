@@ -23,7 +23,7 @@ from slack_sdk.models.blocks import PlainTextInputElement, InputBlock, SectionBl
 
 from g_sheets_client import get_client_mappings
 # Convert MB to bytes for easy comparison
-MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE_MB", 50)) * 1024 * 1024
+MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE_MB", 500)) * 1024 * 1024
 # --- Environment Setup ---
 if '--env' in sys.argv:
     env_index = sys.argv.index('--env') + 1

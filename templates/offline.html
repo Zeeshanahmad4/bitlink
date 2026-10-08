@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BitLink - Offline</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 flex items-center justify-center min-h-screen p-6">
+    <div class="max-w-md w-full text-center bg-slate-800/80 backdrop-blur-xl p-8 rounded-3xl border border-slate-700/60 shadow-2xl space-y-6">
+        <div class="w-16 h-16 rounded-2xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center mx-auto text-2xl animate-pulse">
+            <i class="fa-solid fa-wifi-slash"></i>
+        </div>
+        
+        <div class="space-y-2">
+            <h1 class="text-xl font-bold tracking-tight text-white">You Are Offline</h1>
+            <p class="text-xs text-slate-400 leading-relaxed">
+                BitLink Control Dashboard requires an active network connection to process live client messages and telemetry.
+            </p>
+        </div>
+
+        <div class="pt-2">
+            <button onclick="window.location.reload()" class="w-full inline-flex items-center justify-center space-x-2 px-5 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs transition shadow-lg shadow-emerald-500/20 active:scale-95">
+                <i class="fa-solid fa-rotate-right"></i>
+                <span>Retry Connection</span>
+            </button>
+        </div>
+
+        <div class="text-[10px] text-slate-500 font-mono">
+            BitLink Dashboard PWA Engine • Status: Offline
+        </div>
+    </div>
+</body>
+</html>

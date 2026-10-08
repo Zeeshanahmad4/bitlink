@@ -52,7 +52,7 @@ from g_sheets_client import get_client_mappings
 # Environment setup moved to top
 
 # Convert MB to bytes for easy comparison
-MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE_MB", 50)) * 1024 * 1024
+MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE_MB", 500)) * 1024 * 1024
 
 logging.basicConfig(
     level=logging.INFO,
@@ -345,7 +345,8 @@ def send_whatsapp_message(chat_id, message, media=None, mentions=None, max_retri
             if mentions:
                 payload["mentions"] = mentions
 
-            response = requests.post(f"{NODE_API_URL}/send-message", json=payload, timeout=10)
+            req_timeout = 600 if media else 10
+            response = requests.post(f"{NODE_API_URL}/send-message", json=payload, timeout=req_timeout)
 
             with open("process_debug.log", "a") as f: f.write(f"Node response: {response.status_code} {response.text[:100]}\n")
 
@@ -1127,6 +1128,11 @@ def process_slack_to_whatsapp(event, bot_token):
 
         whatsapp_chat_id = mapping.get("whatsapp_chat_id") or mapping.get("external_id") or mapping.get("lid")
 
+        # Global Blocklist Check (Outbound)
+        if sales_store.is_external_id_blocked(whatsapp_chat_id):
+            logging.warning(f"🛡️ [BLOCKLIST] Recipient {whatsapp_chat_id} is in BLOCKLIST. Outbound message dropped.")
+            return
+
         # Two-way blocking: check if client was handed over to delivery
         is_handed_off = bool(mapping.get('delivery_handed_off', False))
         if not is_handed_off and mapping.get('type') == 'sales':
@@ -1213,7 +1219,7 @@ def process_slack_to_whatsapp(event, bot_token):
 
                     with requests.Session() as s:
                         s.headers.update({"Authorization": f"Bearer {bot_token}"})
-                        file_response = s.get(file_url, timeout=30)
+                        file_response = s.get(file_url, timeout=300)
                     
                     if file_response.status_code != 200:
                         logging.error(f"Failed to download file from Slack: {file_name}. Status: {file_response.status_code}")

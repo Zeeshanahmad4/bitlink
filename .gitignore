@@ -76,6 +76,8 @@ coaud.md
 goals_settings.md
 daily-report-*.md
 backups/
+*.sql
+!schema.sql
 
 
 # -------------------------------------------------------
@@ -128,5 +130,4 @@ temp_downloads_telegram/
 # Legacy / generated files excluded from the server deploy
 # -------------------------------------------------------
 ecosystem.config.js
-nginx-bitlink.conf
 uv.lock
