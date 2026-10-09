@@ -632,7 +632,7 @@ server {
 
     # PWA Service Worker (Never cache sw.js, set Service-Worker-Allowed header)
     location /sw.js {
-        proxy_pass http://127.0.0.1:5050/sw.js;
+        proxy_pass http://127.0.0.1:5051/sw.js;
         proxy_set_header Host $host;
         add_header Cache-Control "no-cache";
         add_header Service-Worker-Allowed "/";
@@ -640,14 +640,14 @@ server {
 
     # PWA Web Application Manifest
     location /manifest.json {
-        proxy_pass http://127.0.0.1:5050/manifest.json;
+        proxy_pass http://127.0.0.1:5051/manifest.json;
         proxy_set_header Host $host;
         add_header Cache-Control "public, max-age=3600";
     }
 
     # Main Dashboard Proxy
     location / {
-        proxy_pass          http://127.0.0.1:5050;
+        proxy_pass          http://127.0.0.1:5051;
         proxy_http_version  1.1;
 
         proxy_set_header    Host              $host;

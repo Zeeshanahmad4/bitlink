@@ -20,6 +20,7 @@ platforms already send clean Unicode.
 Both bridges share this module so their outbound behaviour cannot drift apart.
 """
 
+import html
 import logging
 import re
 
@@ -108,22 +109,28 @@ def strip_slack_markup(text):
 
     ``<https://x.com|label>`` and ``<https://x.com>`` both become readable text,
     ``<#C123|general>`` becomes ``#general``, and ``<!here>`` becomes ``@here``.
+    Also unescapes HTML entities encoded by Slack (e.g. ``&amp;`` -> ``&``).
 
     User mentions are deliberately left as ``<@U123>``: they carry a Slack user
     ID that only the mention pipeline can resolve, and silently dropping the
     brackets would leave a raw ID in front of the client.
     """
-    if not text or "<" not in text:
+    if not text or ("<" not in text and "&" not in text):
         return text
 
-    text = _LABELLED_NON_URL_RE.sub(lambda m: m.group(2), text)
-    text = _BARE_NON_URL_RE.sub(lambda m: m.group(2), text)
-    text = _LABELLED_LINK_RE.sub(_format_labelled_link, text)
-    text = _BARE_LINK_RE.sub(lambda m: f"{m.group(1)}:{m.group(2)}", text)
-    text = _LABELLED_CHANNEL_RE.sub(lambda m: f"#{m.group(2)}", text)
-    text = _BARE_CHANNEL_RE.sub(lambda m: f"#{m.group(1)}", text)
-    text = _LABELLED_MENTION_RE.sub(lambda m: f"@{m.group(2)}", text)
-    text = _BROADCAST_RE.sub(lambda m: f"@{m.group(1) or m.group(2)}", text)
+    if "<" in text:
+        text = _LABELLED_NON_URL_RE.sub(lambda m: m.group(2), text)
+        text = _BARE_NON_URL_RE.sub(lambda m: m.group(2), text)
+        text = _LABELLED_LINK_RE.sub(_format_labelled_link, text)
+        text = _BARE_LINK_RE.sub(lambda m: f"{m.group(1)}:{m.group(2)}", text)
+        text = _LABELLED_CHANNEL_RE.sub(lambda m: f"#{m.group(2)}", text)
+        text = _BARE_CHANNEL_RE.sub(lambda m: f"#{m.group(1)}", text)
+        text = _LABELLED_MENTION_RE.sub(lambda m: f"@{m.group(2)}", text)
+        text = _BROADCAST_RE.sub(lambda m: f"@{m.group(1) or m.group(2)}", text)
+
+    if "&" in text:
+        text = html.unescape(text)
+
     return text
 
 

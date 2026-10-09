@@ -73,14 +73,50 @@ app = Flask(__name__)
 
 
 class BoundedMessageMap:
-    """Bounded message map with TTL and size limits to prevent memory leaks."""
+    """Bounded message map with TTL and size limits to prevent memory leaks, with optional persistence."""
 
-    def __init__(self, max_size=50000, ttl_hours=48):
+    def __init__(self, max_size=50000, ttl_hours=48, persistence_file=None):
         self.map = OrderedDict()
         self.timestamps = {}
         self.max_size = max_size
         self.ttl_seconds = ttl_hours * 3600
         self.lock = threading.Lock()
+        self.persistence_file = persistence_file
+        if persistence_file:
+            self._load()
+
+    def _load(self):
+        if not self.persistence_file or not os.path.exists(self.persistence_file):
+            return
+        try:
+            with open(self.persistence_file, 'r') as f:
+                data = json.load(f)
+            now = time.time()
+            for k, entry in data.items():
+                if isinstance(entry, dict) and "v" in entry:
+                    ts = entry.get("t", now)
+                    if now - ts <= self.ttl_seconds:
+                        self.map[k] = entry["v"]
+                        self.timestamps[k] = ts
+                else:
+                    self.map[k] = entry
+                    self.timestamps[k] = now
+        except Exception as e:
+            logging.debug(f"Could not load {self.persistence_file}: {e}")
+
+    def _save(self):
+        if not self.persistence_file:
+            return
+        try:
+            data = {}
+            for k, v in self.map.items():
+                data[k] = {"v": v, "t": self.timestamps.get(k, time.time())}
+            tmp = f"{self.persistence_file}.tmp"
+            with open(tmp, 'w') as f:
+                json.dump(data, f)
+            os.replace(tmp, self.persistence_file)
+        except Exception as e:
+            logging.debug(f"Could not save {self.persistence_file}: {e}")
 
     def _purge_expired(self):
         current_time = time.time()
@@ -103,6 +139,7 @@ class BoundedMessageMap:
                 self.timestamps.pop(oldest, None)
             self.map[key] = value
             self.timestamps[key] = time.time()
+            self._save()
 
     def get(self, key, default=None):
         with self.lock:
@@ -118,6 +155,7 @@ class BoundedMessageMap:
         with self.lock:
             self.map.pop(key, None)
             self.timestamps.pop(key, None)
+            self._save()
 
 
 # --- Global State Variables ---
@@ -127,8 +165,8 @@ processed_slack_events = deque(maxlen=1000)
 processed_whatsapp_events = deque(maxlen=500)
 whatsapp_to_slack_map = {}
 slack_to_whatsapp_map = {}
-slack_to_whatsapp_msg_map = BoundedMessageMap(max_size=50000, ttl_hours=48)
-wa_to_slack_map = BoundedMessageMap(max_size=50000, ttl_hours=48)  # reverse: wa_msg_id -> {channel, ts}
+slack_to_whatsapp_msg_map = BoundedMessageMap(max_size=50000, ttl_hours=48, persistence_file="slack_to_whatsapp_msg_map.json")
+wa_to_slack_map = BoundedMessageMap(max_size=50000, ttl_hours=48, persistence_file="whatsapp_to_slack_msg_map.json")  # reverse: wa_msg_id -> {channel, ts}
 posted_bridge_slack_events = deque(maxlen=2000)
 thread_pool = ThreadPoolExecutor(max_workers=20)
 slack_bot_user_id = None

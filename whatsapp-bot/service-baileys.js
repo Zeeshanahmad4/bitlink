@@ -14,6 +14,43 @@ const NOTIFIED_GROUPS_FILE = path.join(__dirname, 'notified_groups.json');
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
 const SLACK_ADMIN_CHANNEL = process.env.SLACK_ADMIN_CHANNEL_ID;
 const PORT = process.env.PORT || 3101;
+const WA_REFRESH_PORT = process.env.WHATSAPP_REFRESH_PORT || 8102;
+
+async function notifyBridge(endpoint, data) {
+    const urls = [];
+    if (process.env.WHATSAPP_BRIDGE_URL) {
+        urls.push(`${process.env.WHATSAPP_BRIDGE_URL.replace(/\/$/, '')}${endpoint}`);
+    }
+    urls.push(`http://wa-bridge:${WA_REFRESH_PORT}${endpoint}`);
+    urls.push(`http://127.0.0.1:${WA_REFRESH_PORT}${endpoint}`);
+
+    const tried = new Set();
+    for (const url of urls) {
+        if (tried.has(url)) continue;
+        tried.add(url);
+        try {
+            await axios.post(url, data, { timeout: 3000 });
+            log(`[NOTIFY_BRIDGE] Successfully notified bridge at ${url}`);
+            return true;
+        } catch (err) {
+            // Try next fallback URL
+        }
+    }
+    log(`[NOTIFY_BRIDGE] Failed to notify bridge at any URL for ${endpoint}`);
+    return false;
+}
+
+function extractProtocolMessage(msg) {
+    if (!msg) return null;
+    const m = msg.message || msg;
+    if (!m) return null;
+    return m.protocolMessage ||
+           m.editedMessage?.message?.protocolMessage ||
+           m.ephemeralMessage?.message?.protocolMessage ||
+           m.viewOnceMessage?.message?.protocolMessage ||
+           m.viewOnceMessageV2?.message?.protocolMessage ||
+           m.documentWithCaptionMessage?.message?.protocolMessage;
+}
 
 const app = express();
 app.use(bodyParser.json({ limit: '700mb' }));
@@ -180,8 +217,8 @@ function registerMessageHandlers() {
 
             const chatId = msg.key.remoteJid;
 
-            // Baileys sometimes nests protocol messages (like edits) inside an editedMessage wrapper
-            const protocolMsg = msg.message?.protocolMessage || msg.message?.editedMessage?.message?.protocolMessage;
+            // Baileys protocol messages can be direct or nested inside wrappers
+            const protocolMsg = extractProtocolMessage(msg);
 
             if (protocolMsg) {
                 log(`[DEBUG_UPSERT_PROTOCOL] msg ${msgId} protocolMsg structure: ${JSON.stringify(protocolMsg)}`);
@@ -192,11 +229,7 @@ function registerMessageHandlers() {
                 const deletedKey = protocolMsg.key;
                 log(`[DELETE DETECTED] ${chatId}: msg ${deletedKey?.id}`);
                 if (deletedKey?.id) {
-                    try {
-                        await axios.post('http://127.0.0.1:8101/whatsapp-delete', { messageId: deletedKey.id });
-                    } catch (err) {
-                        log('Failed to notify bridge about delete:', err.message);
-                    }
+                    await notifyBridge('/whatsapp-delete', { messageId: deletedKey.id });
                 }
                 continue;
             }
@@ -209,14 +242,10 @@ function registerMessageHandlers() {
                 
                 if (newText && editedKey?.id) {
                     log(`[EDIT DETECTED] ${chatId}: msg ${editedKey.id} → "${newText.substring(0, 50)}"`);
-                    try {
-                        await axios.post('http://127.0.0.1:8101/whatsapp-edit', {
-                            messageId: editedKey.id,
-                            newText: newText
-                        });
-                    } catch (err) {
-                        log('Failed to notify bridge about edit:', err.message);
-                    }
+                    await notifyBridge('/whatsapp-edit', {
+                        messageId: editedKey.id,
+                        newText: newText
+                    });
                 }
                 continue;
             }
@@ -290,18 +319,34 @@ function registerMessageHandlers() {
     sock.ev.on('messages.update', async (updates) => {
         for (const { key, update } of updates) {
             if (update.message) {
-                // log(`[DEBUG_UPDATE] ${key.id} structure: ${JSON.stringify(update.message)}`);
+                const protocolMsg = extractProtocolMessage(update);
+                if (protocolMsg && (protocolMsg.type === 0 || protocolMsg.type === 'REVOKE')) {
+                    const deletedKey = protocolMsg.key;
+                    log(`[DELETE IN UPDATE] ${key.remoteJid}: msg ${deletedKey?.id}`);
+                    if (deletedKey?.id) {
+                        await notifyBridge('/whatsapp-delete', { messageId: deletedKey.id });
+                    }
+                    continue;
+                }
+
                 const newText = extractText({ message: update.message });
                 if (newText && key.id) {
                     log(`[EDIT DETECTED] ${key.remoteJid}: → "${newText.substring(0, 50)}"`);
-                    try {
-                        await axios.post('http://127.0.0.1:8101/whatsapp-edit', {
-                            messageId: key.id,
-                            newText,
-                        });
-                    } catch (err) {
-                        log('Failed to notify bridge about edit:', err.message);
-                    }
+                    await notifyBridge('/whatsapp-edit', {
+                        messageId: key.id,
+                        newText,
+                    });
+                }
+            }
+        }
+    });
+
+    sock.ev.on('messages.delete', async (item) => {
+        if (item && Array.isArray(item.keys)) {
+            for (const key of item.keys) {
+                if (key && key.id) {
+                    log(`[MESSAGES.DELETE EVENT] ${key.remoteJid}: msg ${key.id}`);
+                    await notifyBridge('/whatsapp-delete', { messageId: key.id });
                 }
             }
         }

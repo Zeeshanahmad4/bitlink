@@ -17,6 +17,8 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      WHATSAPP_BRIDGE_URL: http://wa-bridge:${WHATSAPP_REFRESH_PORT:-8102}
     volumes:
       # WhatsApp session — must persist or QR scan is required on every restart
       - ./whatsapp-bot/auth_info:/app/whatsapp-bot/auth_info
@@ -37,11 +39,11 @@ services:
     environment:
       DATABASE_URL: postgresql://bitlink:Abdulhanan111%40@host.docker.internal:5432/bitlink
       NODE_API_URL: http://gateway:3101
-      WHATSAPP_REFRESH_PORT: "8101"
-      TELEGRAM_REFRESH_PORT: "8003"
-      CONTROL_DASHBOARD_PORT: "5050"
+      WHATSAPP_REFRESH_PORT: ${WHATSAPP_REFRESH_PORT:-8102}
+      TELEGRAM_REFRESH_PORT: ${TELEGRAM_REFRESH_PORT:-8004}
+      CONTROL_DASHBOARD_PORT: ${CONTROL_DASHBOARD_PORT:-5051}
     ports:
-      - "5050:5050"
+      - "${CONTROL_DASHBOARD_PORT:-5051}:${CONTROL_DASHBOARD_PORT:-5051}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -64,7 +66,7 @@ services:
     environment:
       DATABASE_URL: postgresql://bitlink:Abdulhanan111%40@host.docker.internal:5432/bitlink
       NODE_API_URL: http://gateway:3101
-      WHATSAPP_REFRESH_PORT: "8101"
+      WHATSAPP_REFRESH_PORT: ${WHATSAPP_REFRESH_PORT:-8102}
       TZ: Asia/Karachi
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -87,7 +89,7 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://bitlink:Abdulhanan111%40@host.docker.internal:5432/bitlink
-      TELEGRAM_REFRESH_PORT: "8003"
+      TELEGRAM_REFRESH_PORT: ${TELEGRAM_REFRESH_PORT:-8004}
     volumes:
       - ./sessions:/app/sessions
     extra_hosts:

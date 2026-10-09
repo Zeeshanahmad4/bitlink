@@ -952,6 +952,7 @@ async def handle_telegram_message(event):
                     if len(telegram_to_slack_message_map) > 10000:
                         oldest = next(iter(telegram_to_slack_message_map))
                         del telegram_to_slack_message_map[oldest]
+                    save_reverse_map()
             logging.info(f"Forwarded text from '{sender_name}' to Slack.")
 
         if pfp_path and os.path.exists(pfp_path):
@@ -1013,18 +1014,23 @@ async def handle_telegram_delete(event):
         tg_note(inbound_dropped=1)
         return
     for deleted_id in event.deleted_ids:
-        # Telethon MessageDeleted event has chat_id if available.
-        # Fallback to scanning if chat_id is missing (rare for user bots in modern TG).
+        # Telethon MessageDeleted event has chat_id in supergroups/channels,
+        # but chat_id is None in private 1-on-1 chats.
+        mapping = None
         if event.chat_id:
             map_key = f"{event.chat_id}_{deleted_id}"
             mapping = telegram_to_slack_message_map.pop(map_key, None)
-        else:
-            # Slow fallback if chat_id is missing
+        
+        # Robust fallback: match any key ending with _{deleted_id}
+        if not mapping:
             matched_key = next((k for k in telegram_to_slack_message_map if k.endswith(f"_{deleted_id}")), None)
-            mapping = telegram_to_slack_message_map.pop(matched_key) if matched_key else None
+            if matched_key:
+                mapping = telegram_to_slack_message_map.pop(matched_key, None)
 
         if not mapping:
+            logging.debug(f"[DELETE TG→Slack] No mapping found for deleted msg {deleted_id}")
             continue
+
         try:
             await slack_client.chat_postMessage(
                 channel=mapping["channel"],
@@ -1033,6 +1039,7 @@ async def handle_telegram_delete(event):
                 username="Bitlink Bridge Info"
             )
             logging.info(f"[DELETE TG→Slack] posted delete notice for msg {deleted_id}")
+            save_reverse_map()
         except SlackApiError as e:
             logging.error(f"Failed to post delete notice: {e}")
         except Exception as e:

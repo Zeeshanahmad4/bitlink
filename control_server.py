@@ -195,9 +195,10 @@ def get_system_health():
     except Exception:
         bridges["whatsapp_gateway"] = {"online": False}
 
-    # WhatsApp Python Bridge (8101)
+    # WhatsApp Python Bridge
+    wa_port = os.getenv("WHATSAPP_REFRESH_PORT", 8101)
     try:
-        r = requests.get("http://127.0.0.1:8101/health", timeout=1.0)
+        r = requests.get(f"http://127.0.0.1:{wa_port}/health", timeout=1.0)
         details = r.json() if r.status_code == 200 else {}
         # The bridge is reachable while emergency-stopped; surface that state
         # explicitly so the dashboard can say STOPPED rather than Offline.
@@ -209,9 +210,10 @@ def get_system_health():
     except Exception:
         bridges["whatsapp_bridge"] = {"online": False, "emergency_stop": {"active": False}}
 
-    # Telegram Python Bridge (8003)
+    # Telegram Python Bridge
+    tg_port = os.getenv("TELEGRAM_REFRESH_PORT", 8003)
     try:
-        r = requests.get("http://127.0.0.1:8003/health", timeout=1.0)
+        r = requests.get(f"http://127.0.0.1:{tg_port}/health", timeout=1.0)
         bridges["telegram_bridge"] = {"online": r.status_code == 200, "details": r.json() if r.status_code == 200 else {}}
     except Exception:
         bridges["telegram_bridge"] = {"online": False}
@@ -1733,9 +1735,9 @@ WATCH_FAILURE_ALERT_AFTER = 3
 # will report SERVICE_DOWN forever and train the team to ignore the channel.
 # This list must stay in sync with SERVICES in start_services.py.
 COMPONENT_ENDPOINTS = {
-    "whatsapp_gateway": "http://127.0.0.1:3101",
-    "whatsapp_bridge": "http://127.0.0.1:8101",
-    "telegram_bridge": "http://127.0.0.1:8003",
+    "whatsapp_gateway": f"http://127.0.0.1:{os.getenv('PORT', 3101)}",
+    "whatsapp_bridge": f"http://127.0.0.1:{os.getenv('WHATSAPP_REFRESH_PORT', 8101)}",
+    "telegram_bridge": f"http://127.0.0.1:{os.getenv('TELEGRAM_REFRESH_PORT', 8003)}",
 }
 COMPONENT_LABELS = {
     "whatsapp_gateway": "The WhatsApp session (Node gateway)",

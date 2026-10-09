@@ -27,6 +27,8 @@ sessions/
 *.session
 telegram_message_map.json
 telegram_reverse_map.json
+whatsapp_to_slack_msg_map.json
+slack_to_whatsapp_msg_map.json
 
 
 # -------------------------------------------------------
