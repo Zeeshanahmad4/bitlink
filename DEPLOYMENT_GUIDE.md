@@ -51,7 +51,7 @@ with the dashboard exposed publicly over HTTPS via **DuckDNS** (free domain) and
 | 2 | [Prerequisites](#2-prerequisites) |
 | 3 | [Set up DuckDNS free domain](#3-set-up-duckdns-free-domain) |
 | 4 | [Install Docker, Nginx, and Certbot on the server](#4-install-docker-nginx-and-certbot-on-the-server) |
-| 5 | [Clone and deploy from GitHub](#5-clone-and-deploy-from-github) |
+| 5 | [Deploy code to server (rsync or Git)](#5-deploy-code-to-server-rsync-or-git) |
 | 6 | [Configure environment variables](#6-configure-environment-variables) |
 | 7 | [Build and start all containers](#7-build-and-start-all-containers) |
 | 8 | [First-time logins (WhatsApp QR + Telegram OTP)](#8-first-time-logins-whatsapp-qr--telegram-otp) |
@@ -181,40 +181,98 @@ nginx -v
 
 ---
 
-## 5. Clone and Deploy from GitHub
+## 5. Deploy Code to Server (rsync or Git)
 
-> **🙋 Run on your Linux server via SSH.**
+> **⚠️ CRITICAL: Folder Isolation from Existing BitLink (`bbitlink`)**
+> The server already has an existing instance running in a folder named `bbitlink` (or `bitlink`).
+> To guarantee that the existing instance is **completely untouched and uninterrupted**, this new Sales CRM project is deployed into an isolated folder:
+> **`/opt/bitlink-sales`**
+>
+> All containers, environment variables, databases, and volumes for this deployment live strictly inside `/opt/bitlink-sales`.
 
-BitLink is deployed directly from your GitHub repository. Sensitive files, sessions, logs, and database files are excluded via `.gitignore` so they are never committed to GitHub.
+Choose whichever method fits your current access permissions:
+- **Method A: Direct Deploy via `rsync` (Recommended)** — Best when you cannot push to the main GitHub repository (e.g. CEO is away or waiting on review). Transfers code directly from your Mac to `/opt/bitlink-sales` in seconds.
+- **Method B: Git Clone from GitHub** — Standard deployment if your branch is already pushed to GitHub.
 
-### 5.1 Push latest code from local machine to GitHub
+---
 
-On your **local machine (macOS)**, commit and push your changes:
+### Method A: Direct Deploy via `rsync` (Fastest & No GitHub Push Required)
 
+#### Step 1 — Create the isolated directory on the Linux server:
+Run once over SSH on the server:
 ```bash
-git status
-# Verify that .env, sessions, and credentials are NOT staged
-git add .
-git commit -m "chore: prepare docker deployment and gitignore"
-git push origin <your-branch-or-main>
+sudo mkdir -p /opt/bitlink-sales
+sudo chown -R $USER:$USER /opt/bitlink-sales
 ```
 
-### 5.2 Clone the repository on the Linux server
+#### Step 2 — Run `rsync` from your local Mac terminal:
+From inside your local project folder (`/Users/apple/Desktop/BitLink-Sales/bitlink`), run:
+```bash
+rsync -avz --progress \
+  --exclude='.git' \
+  --exclude='venv' \
+  --exclude='.venv' \
+  --exclude='node_modules' \
+  --exclude='__pycache__' \
+  --exclude='whatsapp-bot/node_modules' \
+  --exclude='whatsapp-bot/auth_info' \
+  --exclude='sessions' \
+  --exclude='.env' \
+  --exclude='*.session' \
+  --exclude='whatsapp_outbox.jsonl' \
+  --exclude='telegram_outbox.jsonl' \
+  ./ root@<YOUR_SERVER_IP>:/opt/bitlink-sales/
+```
 
-SSH into your Linux server and clone the project into `/opt/bitlink`:
+#### Step 3 — Automated 1-Click Updates (`deploy.sh`):
+To easily deploy future code updates without typing commands repeatedly, create a script named `deploy.sh` on your local Mac:
+
+```bash
+#!/bin/bash
+SERVER="root@<YOUR_SERVER_IP>"
+TARGET_DIR="/opt/bitlink-sales"
+
+echo "🚀 Syncing code changes to $SERVER:$TARGET_DIR..."
+rsync -avz \
+  --exclude='.git' \
+  --exclude='venv' \
+  --exclude='.venv' \
+  --exclude='node_modules' \
+  --exclude='__pycache__' \
+  --exclude='whatsapp-bot/node_modules' \
+  --exclude='whatsapp-bot/auth_info' \
+  --exclude='sessions' \
+  --exclude='.env' \
+  --exclude='*.session' \
+  ./ "$SERVER:$TARGET_DIR/"
+
+echo "🔄 Rebuilding & restarting Docker containers on server..."
+ssh "$SERVER" "cd $TARGET_DIR && docker compose up -d --build"
+
+echo "✅ Deployed successfully!"
+```
+
+Make it executable:
+```bash
+chmod +x deploy.sh
+```
+Now anytime you make changes locally on your Mac, simply run `./deploy.sh`.
+
+---
+
+### Method B: Clone from GitHub (Standard Git Flow)
+
+If you have already pushed your branch to GitHub:
 
 ```bash
 # Create directory and assign ownership
-sudo mkdir -p /opt/bitlink
-sudo chown -R $USER:$USER /opt/bitlink
+sudo mkdir -p /opt/bitlink-sales
+sudo chown -R $USER:$USER /opt/bitlink-sales
 
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git /opt/bitlink
+# Clone the repository into the isolated folder
+git clone -b feature/sales-crm-dashboard https://github.com/YOUR_USERNAME/YOUR_REPO.git /opt/bitlink-sales
 
-# Or if you are using SSH deploy keys:
-# git clone git@github.com:YOUR_USERNAME/YOUR_REPO.git /opt/bitlink
-
-cd /opt/bitlink
+cd /opt/bitlink-sales
 ```
 
 > **Tip for Private Repositories:** If your GitHub repo is private, either:
@@ -245,7 +303,7 @@ When cloning BitLink onto your server, the following files and directories are a
 On the server, copy the template `.env.example` to `.env` and fill in your actual credentials:
 
 ```bash
-cd /opt/bitlink
+cd /opt/bitlink-sales
 cp .env.example .env
 nano .env
 ```
@@ -335,7 +393,7 @@ UPWORK_SMTP_SERVER=smtp.gmail.com
 ### 6.7 Lock down the file
 
 ```bash
-chmod 600 /opt/bitlink/.env
+chmod 600 /opt/bitlink-sales/.env
 ```
 
 ### 6.8 Runtime file paths
@@ -366,7 +424,7 @@ When testing is complete and you are ready to switch to company credentials:
 
 ##### Step 1 — Update `.env` with Company Credentials
 ```bash
-nano /opt/bitlink/.env
+nano /opt/bitlink-sales/.env
 ```
 Replace personal credentials with official company values:
 - `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` (Company WhatsApp bridge app)
@@ -381,7 +439,7 @@ Replace personal credentials with official company values:
 Unlink personal WhatsApp and link the official company WhatsApp phone:
 ```bash
 # Delete personal session state
-rm -rf /opt/bitlink/whatsapp-bot/auth_info/*
+rm -rf /opt/bitlink-sales/whatsapp-bot/auth_info/*
 
 # Restart gateway to generate new QR code
 docker compose restart gateway
@@ -397,7 +455,7 @@ Unlink personal Telegram and link the official company Telegram phone:
 docker compose stop tg-bridge
 
 # Remove personal session file
-rm -f /opt/bitlink/sessions/bitlink_telegram.session
+rm -f /opt/bitlink-sales/sessions/bitlink_telegram.session
 
 # Interactive login using Company Telegram phone number & OTP
 docker compose run --rm tg-bridge python main_telegram.py
@@ -430,7 +488,7 @@ docker compose up -d
 > **🙋 Manual step — run on your server.**
 
 ```bash
-cd /opt/bitlink
+cd /opt/bitlink-sales
 
 # Build all images (takes a few minutes on first run)
 docker compose build
@@ -1074,16 +1132,16 @@ docker compose up -d     # start everything again
 ### Database backup
 
 ```bash
-mkdir -p /opt/bitlink/backups
+mkdir -p /opt/bitlink-sales/backups
 docker compose exec db pg_dump -U bitlink bitlink \
-  > /opt/bitlink/backups/bitlink_$(date +%Y%m%d_%H%M%S).sql
+  > /opt/bitlink-sales/backups/bitlink_$(date +%Y%m%d_%H%M%S).sql
 ```
 
 ### Database restore
 
 ```bash
 docker compose exec -T db psql -U bitlink -d bitlink \
-  < /opt/bitlink/backups/bitlink_TIMESTAMP.sql
+  < /opt/bitlink-sales/backups/bitlink_TIMESTAMP.sql
 ```
 
 ### Health and refresh
@@ -1107,28 +1165,32 @@ docker compose exec dashboard wc -l whatsapp_outbox.jsonl
 ### Step 1 — Back up the database first
 
 ```bash
-mkdir -p /opt/bitlink/backups
+mkdir -p /opt/bitlink-sales/backups
 docker compose exec db pg_dump -U bitlink bitlink \
-  > /opt/bitlink/backups/bitlink_$(date +%Y%m%d_%H%M%S).sql
+  > /opt/bitlink-sales/backups/bitlink_$(date +%Y%m%d_%H%M%S).sql
 ```
 
-### Step 2 — Pull latest changes from GitHub
+### Step 2 — Pull or rsync latest code updates
 
-On the **server**:
-
+**If using rsync (from your local Mac):**
 ```bash
-cd /opt/bitlink
+./deploy.sh
+```
+
+**If using GitHub (on the server):**
+```bash
+cd /opt/bitlink-sales
 git pull origin <your-branch-or-main>
 ```
 
-> Your `/opt/bitlink/.env`, session files, and Docker volumes (`pgdata`, `baileys_auth`, `tg_sessions`) will remain completely untouched because they are ignored by Git.
+> Your `/opt/bitlink-sales/.env`, session files, and Docker volumes (`pgdata`, `baileys_auth`, `tg_sessions`) will remain completely untouched.
 
 ### Step 3 — Rebuild and restart containers
 
 On the server:
 
 ```bash
-cd /opt/bitlink
+cd /opt/bitlink-sales
 docker compose build      # rebuild images with new code
 docker compose up -d      # rolling restart of changed services
 ```
@@ -1179,7 +1241,7 @@ docker compose exec db psql -U bitlink -d bitlink -c "SELECT id FROM dashboard_u
 **WhatsApp gateway asks for QR scan on every restart.**
 `whatsapp-bot/auth_info/` is empty or not mounted. Check the volume mount in `docker-compose.yml` and that the directory exists on the host:
 ```bash
-ls /opt/bitlink/whatsapp-bot/auth_info/
+ls /opt/bitlink-sales/whatsapp-bot/auth_info/
 ```
 
 **Telegram re-asks for phone login.**
@@ -1238,7 +1300,7 @@ By default, Docker manages PostgreSQL in the `db` container with zero manual set
    ```bash
    sudo -u postgres psql -c "CREATE USER bitlink WITH PASSWORD 'your_strong_password';"
    sudo -u postgres psql -c "CREATE DATABASE bitlink OWNER bitlink;"
-   sudo -u postgres psql -d bitlink -f /opt/bitlink/schema.sql
+   sudo -u postgres psql -d bitlink -f /opt/bitlink-sales/schema.sql
    ```
 
 3. **Allow Docker containers to connect to the host PostgreSQL:**
@@ -1255,7 +1317,7 @@ By default, Docker manages PostgreSQL in the `db` container with zero manual set
    sudo systemctl restart postgresql
    ```
 
-4. **Update `/opt/bitlink/.env`:**
+4. **Update `/opt/bitlink-sales/.env`:**
    ```ini
    DATABASE_URL=postgresql://bitlink:your_strong_password@172.17.0.1:5432/bitlink
    ```
@@ -1269,7 +1331,7 @@ By default, Docker manages PostgreSQL in the `db` container with zero manual set
 
 ### 18.1 Pre-launch checklist
 
-- [ ] `chmod 600 /opt/bitlink/.env`
+- [ ] `chmod 600 /opt/bitlink-sales/.env`
 - [ ] Strong unique `DB_PASSWORD` in `.env`
 - [ ] Dashboard user created with a real password (no default account)
 - [ ] Ports 80 and 443 open; port 5050 blocked (`sudo ufw deny 5050/tcp`)

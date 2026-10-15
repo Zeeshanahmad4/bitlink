@@ -43,29 +43,49 @@ def infer_geo_language(text: str) -> dict:
         return {"geo": "Unknown", "language": "Unknown"}
 
 
-# --- 2.1 Channel Naming & Collision Resolution ---
+_BLANK_OR_GENERIC_NAMES = {
+    "", ".", "..", "...", "-", "--", "?", "??", "!", "none", "null",
+    "undefined", "unknown", "unknown user", "new client", "new-client",
+    "new telegram lead", "user", "telegram-user", "telegram user"
+}
+
+
+def clean_client_display_name(raw_name: Optional[str], external_id: str) -> str:
+    """
+    Returns a human-readable client name.
+    Falls back to 'Client {last4}' if raw_name is empty, generic, or just dots/punctuation.
+    """
+    if raw_name:
+        s = str(raw_name).strip()
+        # If the string contains no alphanumeric characters at all (e.g. '.', '..', '---', emojis only)
+        if not re.search(r"[a-zA-Z0-9]", s):
+            return f"Client {extract_last_digits(external_id, count=4)}"
+        if s.lower() not in _BLANK_OR_GENERIC_NAMES:
+            return s
+    return f"Client {extract_last_digits(external_id, count=4)}"
+
 
 def sanitize_lead_name(lead_name: Optional[str], external_id: str, max_len: int = 15) -> str:
     """
     Sanitizes a lead's name for Slack channel naming compliance:
     - Lowercase letters, numbers, and hyphens only
     - Strips special characters/spaces/emojis
-    - Falls back to last digits of phone/ID if name is empty or generic
+    - Falls back to last digits of phone/ID if name is empty, generic, or dot
     """
-    if lead_name:
-        # Remove emojis, special characters, and non-alphanumeric (keep spaces and hyphens temporarily)
-        clean = re.sub(r"[^a-zA-Z0-9\s-]", "", str(lead_name)).strip().lower()
-        # Convert spaces to hyphens
-        slug = re.sub(r"[\s_]+", "-", clean)
-        # Collapse multiple hyphens
-        slug = re.sub(r"-+", "-", slug).strip("-")
-        
-        # Avoid generic placeholder slugs
-        if slug and slug not in ["new-client", "user", "new-telegram-lead", "telegram-user"]:
-            return slug[:max_len].rstrip("-")
+    effective_name = clean_client_display_name(lead_name, external_id)
+    # Remove emojis, special characters, and non-alphanumeric (keep spaces and hyphens temporarily)
+    clean = re.sub(r"[^a-zA-Z0-9\s-]", "", str(effective_name)).strip().lower()
+    # Convert spaces to hyphens
+    slug = re.sub(r"[\s_]+", "-", clean)
+    # Collapse multiple hyphens
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    
+    # Avoid generic placeholder slugs
+    if slug and slug not in ["new-client", "user", "new-telegram-lead", "telegram-user", "unknown"]:
+        return slug[:max_len].rstrip("-")
 
     # Fallback to last digits if name is unavailable or purely special characters
-    return extract_last_digits(external_id, count=4)
+    return f"client-{extract_last_digits(external_id, count=4)}"
 
 
 def extract_last_digits(external_id: str, count: int = 3) -> str:
@@ -517,10 +537,12 @@ def provision_whatsapp_lead(
     # 2. Assign Round-Robin Owner
     owner_slack_id, owner_name = assign_round_robin_owner()
 
-    sender_name = msg.get("senderName") or "New Client"
+    raw_name = msg.get("senderName")
     group_name = msg.get("groupName") or msg.get("groupSubject")
     is_group = msg.get("isGroup") or external_id.endswith("@g.us")
-    lead_name = group_name if (is_group and group_name) else sender_name
+    candidate_name = group_name if (is_group and group_name) else raw_name
+    sender_name = clean_client_display_name(candidate_name, external_id)
+    lead_name = sender_name
 
     # 3. Create Slack Channel (using fetched Lead Name) & Invite Member Pool
     channel_id, channel_name, invited_ids = provision_slack_channel_with_pool(
@@ -618,10 +640,12 @@ def provision_telegram_lead(
     # 2. Assign Round-Robin Owner
     owner_slack_id, owner_name = assign_round_robin_owner()
 
-    sender_name = msg.get("senderName") or "New Telegram Lead"
+    raw_name = msg.get("senderName")
     group_name = msg.get("groupName") or msg.get("groupSubject")
     is_group = msg.get("isGroup") or str(external_id).startswith("-")
-    lead_name = group_name if (is_group and group_name) else sender_name
+    candidate_name = group_name if (is_group and group_name) else raw_name
+    sender_name = clean_client_display_name(candidate_name, external_id)
+    lead_name = sender_name
 
     # 3. Create Slack Channel (using fetched Lead Name) & Invite Member Pool
     channel_id, channel_name, invited_ids = provision_slack_channel_with_pool(

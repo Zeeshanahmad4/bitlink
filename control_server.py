@@ -151,25 +151,41 @@ def auth_logout():
 
 PORT = int(os.getenv("CONTROL_DASHBOARD_PORT", 5050))
 
+# --- Bridge Host & Port Discovery ---
+# In Docker, containers reach each other via service hostnames ('wa-bridge', 'tg-bridge', 'gateway').
+# Outside Docker, fallback to 127.0.0.1.
+WA_BRIDGE_HOST = os.getenv("WHATSAPP_BRIDGE_HOST", "wa-bridge" if os.path.exists("/.dockerenv") else "127.0.0.1")
+TG_BRIDGE_HOST = os.getenv("TELEGRAM_BRIDGE_HOST", "tg-bridge" if os.path.exists("/.dockerenv") else "127.0.0.1")
+GATEWAY_HOST = os.getenv("GATEWAY_HOST", "gateway" if os.path.exists("/.dockerenv") else "127.0.0.1")
+WA_PORT = int(os.getenv("WHATSAPP_REFRESH_PORT", 8102))
+TG_PORT = int(os.getenv("TELEGRAM_REFRESH_PORT", 8004))
+GATEWAY_PORT = int(os.getenv("PORT", 3101))
+
 
 # --- Bridge Auto-Refresh Dispatcher ---
 
 def dispatch_bridge_refresh():
     """Dispatches background refresh requests to running bridge services."""
     def _worker():
-        ports = [
-            ("WhatsApp", os.getenv("WHATSAPP_REFRESH_PORT", 8101)),
-            ("Telegram", os.getenv("TELEGRAM_REFRESH_PORT", 8003)),
-            ("Discord", os.getenv("DISCORD_REFRESH_PORT", 8102))
+        targets = [
+            ("WhatsApp", WA_BRIDGE_HOST, WA_PORT),
+            ("Telegram", TG_BRIDGE_HOST, TG_PORT),
         ]
         headers = {'Content-Type': 'application/json'}
-        for name, port in ports:
-            url = f"http://localhost:{port}/refresh"
+        for name, host, port in targets:
+            url = f"http://{host}:{port}/refresh"
             try:
-                requests.post(url, headers=headers, timeout=1.5)
-                logging.info(f"⚡ [REFRESH] Signal sent successfully to {name} bridge on port {port}")
+                requests.post(url, headers=headers, timeout=2.0)
+                logging.info(f"⚡ [REFRESH] Signal sent successfully to {name} bridge at {url}")
             except requests.exceptions.RequestException:
-                logging.debug(f"ℹ️ [REFRESH] Could not reach {name} bridge on port {port} (may be offline)")
+                if host != "127.0.0.1":
+                    try:
+                        requests.post(f"http://127.0.0.1:{port}/refresh", headers=headers, timeout=1.0)
+                        logging.info(f"⚡ [REFRESH] Signal sent successfully to {name} bridge on 127.0.0.1:{port}")
+                        continue
+                    except Exception:
+                        pass
+                logging.debug(f"ℹ️ [REFRESH] Could not reach {name} bridge at {url} (may be offline)")
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -183,47 +199,55 @@ def get_system_health():
     """Returns real-time health of all running bridges and gateway services."""
     bridges = {}
 
-    # WhatsApp Node Gateway (3101)
-    # The gateway answers HTTP 200 even when logged out, reporting
-    # {"status": "not_ready"}. Judging it on the status code alone marked a dead
-    # WhatsApp session as ONLINE, so the body is checked as well.
+    # WhatsApp Node Gateway
+    gateway_url = f"http://{GATEWAY_HOST}:{GATEWAY_PORT}/health"
     try:
-        r = requests.get("http://127.0.0.1:3101/health", timeout=1.0)
+        r = requests.get(gateway_url, timeout=1.5)
         details = r.json() if r.status_code == 200 else {}
         ready = str(details.get("status", "")).lower() == "ready"
         bridges["whatsapp_gateway"] = {"online": r.status_code == 200 and ready, "details": details}
     except Exception:
-        bridges["whatsapp_gateway"] = {"online": False}
+        try:
+            r = requests.get(f"http://127.0.0.1:{GATEWAY_PORT}/health", timeout=1.0)
+            details = r.json() if r.status_code == 200 else {}
+            ready = str(details.get("status", "")).lower() == "ready"
+            bridges["whatsapp_gateway"] = {"online": r.status_code == 200 and ready, "details": details}
+        except Exception:
+            bridges["whatsapp_gateway"] = {"online": False}
 
     # WhatsApp Python Bridge
-    wa_port = os.getenv("WHATSAPP_REFRESH_PORT", 8101)
+    wa_url = f"http://{WA_BRIDGE_HOST}:{WA_PORT}/health"
     try:
-        r = requests.get(f"http://127.0.0.1:{wa_port}/health", timeout=1.0)
+        r = requests.get(wa_url, timeout=1.5)
         details = r.json() if r.status_code == 200 else {}
-        # The bridge is reachable while emergency-stopped; surface that state
-        # explicitly so the dashboard can say STOPPED rather than Offline.
         bridges["whatsapp_bridge"] = {
             "online": r.status_code == 200,
             "emergency_stop": details.get("emergency_stop", {"active": False}),
             "details": details,
         }
     except Exception:
-        bridges["whatsapp_bridge"] = {"online": False, "emergency_stop": {"active": False}}
+        try:
+            r = requests.get(f"http://127.0.0.1:{WA_PORT}/health", timeout=1.0)
+            details = r.json() if r.status_code == 200 else {}
+            bridges["whatsapp_bridge"] = {
+                "online": r.status_code == 200,
+                "emergency_stop": details.get("emergency_stop", {"active": False}),
+                "details": details,
+            }
+        except Exception:
+            bridges["whatsapp_bridge"] = {"online": False, "emergency_stop": {"active": False}}
 
     # Telegram Python Bridge
-    tg_port = os.getenv("TELEGRAM_REFRESH_PORT", 8003)
+    tg_url = f"http://{TG_BRIDGE_HOST}:{TG_PORT}/health"
     try:
-        r = requests.get(f"http://127.0.0.1:{tg_port}/health", timeout=1.0)
+        r = requests.get(tg_url, timeout=1.5)
         bridges["telegram_bridge"] = {"online": r.status_code == 200, "details": r.json() if r.status_code == 200 else {}}
     except Exception:
-        bridges["telegram_bridge"] = {"online": False}
-
-    # Discord Python Bridge (8102) — previously unmonitored entirely
-    try:
-        r = requests.get("http://127.0.0.1:8102/health", timeout=1.0)
-        bridges["discord_bridge"] = {"online": r.status_code == 200, "details": r.json() if r.status_code == 200 else {}}
-    except Exception:
-        bridges["discord_bridge"] = {"online": False}
+        try:
+            r = requests.get(f"http://127.0.0.1:{TG_PORT}/health", timeout=1.0)
+            bridges["telegram_bridge"] = {"online": r.status_code == 200, "details": r.json() if r.status_code == 200 else {}}
+        except Exception:
+            bridges["telegram_bridge"] = {"online": False}
 
     # PostgreSQL — a dashboard that cannot reach its own store is not healthy
     try:
@@ -601,12 +625,76 @@ def update_sales_lead(external_id: str):
         if data.get("stage") in ["won", "lost"]:
             data["closed_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
 
+        # In-place Slack channel rename if requested
+        channel_renamed = False
+        channel_name_result = None
+        rename_error = None
+        target_channel_id = lead.get("slack_channel_id")
+
+        if (data.get("rename_slack_channel") or data.get("new_channel_name")) and target_channel_id:
+            try:
+                from slack_sdk import WebClient
+                from slack_sdk.errors import SlackApiError
+                import re
+
+                lead_platform = str(lead.get("platform", "whatsapp")).lower()
+                bot_token = os.getenv("SLACK_BOT_TOKEN") if lead_platform == "whatsapp" \
+                    else os.getenv("SLACK_BOT_TOKEN_TELEGRAM", os.getenv("SLACK_BOT_TOKEN"))
+                wc = WebClient(token=bot_token)
+
+                custom_name = (data.get("new_channel_name") or "").strip()
+                if custom_name:
+                    clean_slug = re.sub(r"[^a-z0-9-]", "", custom_name.lower())[:80]
+                else:
+                    new_name = (data.get("client_name") or lead.get("client_name") or "client").strip()
+                    c_clean = re.sub(r"[^a-zA-Z0-9\s-]", "", new_name).strip().lower()
+                    c_slug = re.sub(r"[\s_]+", "-", c_clean)[:25].strip("-") or "lead"
+                    ext_digits = re.sub(r"\D", "", clean_ext_id.split("@")[0])
+                    ext_suffix = ext_digits[-4:] if len(ext_digits) >= 4 else "client"
+                    prefix = "sale-tg" if lead_platform == "telegram" else "sale-wa"
+                    clean_slug = f"{prefix}-{c_slug}-{ext_suffix}"[:80]
+
+                if clean_slug:
+                    logging.info(f"Attempting to rename Slack channel {target_channel_id} to '{clean_slug}'...")
+                    resp = wc.conversations_rename(channel=target_channel_id, name=clean_slug)
+                    if resp.get("ok"):
+                        channel_renamed = True
+                        channel_name_result = clean_slug
+                        logging.info(f"Successfully renamed Slack channel {target_channel_id} to '{clean_slug}'")
+            except SlackApiError as sae:
+                rename_error = sae.response.get("error", str(sae))
+                logging.warning(f"Could not rename Slack channel {target_channel_id}: {rename_error}")
+            except Exception as ex:
+                rename_error = str(ex)
+                logging.warning(f"Exception during Slack channel rename: {ex}")
+
+        # Sync client_name to delivery client_mappings if mapped
+        if "client_name" in data and data["client_name"]:
+            try:
+                deliv = db_store.find_delivery_mapping_by_external_id(clean_ext_id)
+                if deliv and deliv.get("id"):
+                    db_store.update_client_mapping(deliv["id"], {"client_name": str(data["client_name"]).strip()})
+            except Exception as de:
+                logging.warning(f"Could not sync client_name to delivery mapping: {de}")
+
         if not db_store.update_sales_lead(lead_id, data):
             return jsonify({"success": False, "error": f"Lead {clean_ext_id} not found"}), 404
 
         dispatch_bridge_refresh()
         logging.info(f"Updated sales lead {clean_ext_id} (id={lead_id}): {data}")
-        return jsonify({"success": True, "message": f"Lead {clean_ext_id} updated successfully."})
+
+        res_msg = f"Lead {clean_ext_id} updated successfully."
+        if channel_renamed:
+            res_msg += f" Slack channel renamed to #{channel_name_result}."
+        elif rename_error:
+            res_msg += f" (Note: Slack channel rename skipped: {rename_error})"
+
+        return jsonify({
+            "success": True,
+            "message": res_msg,
+            "channel_renamed": channel_renamed,
+            "channel_name": channel_name_result
+        })
     except Exception as e:
         logging.error(f"Error updating sales lead {external_id}: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
@@ -803,9 +891,12 @@ def update_settings():
 @app.route('/api/sales/digest/trigger', methods=['POST'])
 def trigger_sales_digest():
     """Triggers immediate calculation and posting of the Daily Sales Digest to Slack."""
+    url = f"http://{WA_BRIDGE_HOST}:{WA_PORT}/sales-digest/trigger"
     try:
-        url = f"http://127.0.0.1:{os.getenv('WHATSAPP_REFRESH_PORT', 8101)}/sales-digest/trigger"
-        r = requests.post(url, timeout=10.0)
+        try:
+            r = requests.post(url, timeout=10.0)
+        except requests.exceptions.RequestException:
+            r = requests.post(f"http://127.0.0.1:{WA_PORT}/sales-digest/trigger", timeout=10.0)
         try:
             return r.json(), r.status_code
         except Exception:
@@ -813,23 +904,26 @@ def trigger_sales_digest():
                 return jsonify({"success": False, "error": "Bridge is running an older process. Please restart main_whatsapp.py to activate the digest endpoint."}), 400
             return jsonify({"success": False, "error": f"Bridge returned status {r.status_code}: {r.text[:100]}"}), 500
     except Exception as e:
-        logging.error(f"Error calling bridge digest trigger: {e}")
+        logging.error(f"Error calling bridge digest trigger at {url}: {e}")
         return jsonify({"success": False, "error": "WhatsApp bridge is offline. Please start main_whatsapp.py"}), 503
 
 
 @app.route('/api/sales/insights/generate', methods=['POST'])
 def generate_sales_insights():
     """Triggers Gemini AI Win/Loss intelligence report for closed deals."""
+    url = f"http://{WA_BRIDGE_HOST}:{WA_PORT}/sales-insights/generate"
     try:
-        url = f"http://127.0.0.1:{os.getenv('WHATSAPP_REFRESH_PORT', 8101)}/sales-insights/generate"
         body = request.get_json(force=True) if request.data else {}
-        r = requests.post(url, json=body, timeout=30.0)
+        try:
+            r = requests.post(url, json=body, timeout=30.0)
+        except requests.exceptions.RequestException:
+            r = requests.post(f"http://127.0.0.1:{WA_PORT}/sales-insights/generate", json=body, timeout=30.0)
         try:
             return r.json(), r.status_code
         except Exception:
             return jsonify({"success": False, "error": f"Bridge error: {r.text[:100]}"}), 500
     except Exception as e:
-        logging.error(f"Error calling bridge insights generation: {e}")
+        logging.error(f"Error calling bridge insights generation at {url}: {e}")
         return jsonify({"success": False, "error": "WhatsApp bridge is offline. Please start main_whatsapp.py"}), 503
 
 
@@ -1735,9 +1829,9 @@ WATCH_FAILURE_ALERT_AFTER = 3
 # will report SERVICE_DOWN forever and train the team to ignore the channel.
 # This list must stay in sync with SERVICES in start_services.py.
 COMPONENT_ENDPOINTS = {
-    "whatsapp_gateway": f"http://127.0.0.1:{os.getenv('PORT', 3101)}",
-    "whatsapp_bridge": f"http://127.0.0.1:{os.getenv('WHATSAPP_REFRESH_PORT', 8101)}",
-    "telegram_bridge": f"http://127.0.0.1:{os.getenv('TELEGRAM_REFRESH_PORT', 8003)}",
+    "whatsapp_gateway": f"http://{GATEWAY_HOST}:{GATEWAY_PORT}",
+    "whatsapp_bridge": f"http://{WA_BRIDGE_HOST}:{WA_PORT}",
+    "telegram_bridge": f"http://{TG_BRIDGE_HOST}:{TG_PORT}",
 }
 COMPONENT_LABELS = {
     "whatsapp_gateway": "The WhatsApp session (Node gateway)",
@@ -1748,63 +1842,51 @@ COMPONENT_LABELS = {
 _watch_state: Dict[str, bool] = {}
 
 
-def _service_healthy(component: str, base_url: str) -> bool:
-    """True only when a bridge answers 200 AND reports itself ready.
-
-    Bridges do not agree on the shape of their health response, so both
-    conventions are accepted rather than hardcoding one per component:
-    - {"status": "ready", ...}      — telegram, discord, Node gateway
-    - {"ok": true, ...}             — whatsapp bridge
-    - {"status": "not_ready", ...} / {"ok": false, ...}  — explicitly not ready
-
-    A component that answers 200 but says neither field is treated as unhealthy:
-    silence about readiness is not evidence of readiness. A plain
-    connection-refused / timeout counts as unhealthy regardless.
-    """
+def _check_service(component: str, base_url: str) -> Dict[str, Any]:
+    """Inspects a service health endpoint and returns detailed status."""
     try:
         resp = requests.get(f"{base_url}/health", timeout=WATCH_TIMEOUT_SECONDS)
         if resp.status_code != 200:
-            return False
+            return {"healthy": False, "status": f"http_{resp.status_code}", "raw": resp.text[:100]}
         try:
             body = resp.json()
         except ValueError:
-            return False
+            return {"healthy": False, "status": "invalid_json"}
 
         if not isinstance(body, dict):
-            return False
+            return {"healthy": False, "status": "invalid_format"}
 
-        if "status" in body:
-            return str(body.get("status", "")).lower() == "ready"
-        if "ok" in body:
-            return bool(body.get("ok"))
-        return False
-    except requests.RequestException:
-        return False
+        status_str = str(body.get("status", "")).lower()
+        if status_str == "qr_required":
+            return {"healthy": False, "status": "qr_required", "details": body}
+        if status_str == "needs_login" or body.get("authorized") is False:
+            return {"healthy": False, "status": "needs_login", "details": body}
+        if status_str == "ready" or bool(body.get("ok")):
+            return {"healthy": True, "status": "ready", "details": body}
+        return {"healthy": False, "status": status_str or "not_ready", "details": body}
+    except requests.RequestException as e:
+        return {"healthy": False, "status": "unreachable", "error": str(e)}
 
 
 def _watch_once() -> Dict[str, bool]:
-    state: Dict[str, bool] = {}
+    checks: Dict[str, Dict[str, Any]] = {}
 
     for component, url in COMPONENT_ENDPOINTS.items():
-        state[component] = _service_healthy(component, url)
+        checks[component] = _check_service(component, url)
 
     try:
-        state["postgres"] = db.is_available()
-    except Exception:
-        state["postgres"] = False
+        pg_ok = db.is_available()
+        checks["postgres"] = {"healthy": pg_ok, "status": "ready" if pg_ok else "unreachable"}
+    except Exception as e:
+        checks["postgres"] = {"healthy": False, "status": "unreachable", "error": str(e)}
+
+    state: Dict[str, bool] = {}
 
     # Only transitions are reported, so a service that stays down does not post
     # on every tick, and a flapping service does not flood the channel.
-    #
-    # The first pass still reports anything already unhealthy. _watch_state lives
-    # only in this process, so an outage that began before (or during) a restart
-    # has no prior state to transition away from. Treating the first pass as a
-    # pure baseline meant such an outage was silently absorbed and then, because
-    # the state never changed again, never reported at all: restarting the
-    # dashboard mid-incident erased the alert permanently. Healthy components are
-    # the only ones safe to adopt silently, since a transition away from healthy
-    # would have produced SERVICE_RECOVERED for something nobody saw break.
-    for component, healthy in state.items():
+    for component, check in checks.items():
+        healthy = check["healthy"]
+        state[component] = healthy
         previous = _watch_state.get(component)
         _watch_state[component] = healthy
         if previous is None and healthy:
@@ -1818,12 +1900,23 @@ def _watch_once() -> Dict[str, bool]:
                           technical_detail=f"{component} recovered and is answering health checks.",
                           key=component)
         else:
-            alerts.report(code="SERVICE_DOWN", severity="critical", component=component,
-                          summary_plain=f"{label} is not responding. "
-                                        f"Client messages may not be reaching the team.",
-                          technical_detail=f"{component} failed its health check at "
-                                            f"{COMPONENT_ENDPOINTS.get(component, 'the PostgreSQL pool')}.",
-                          key=component)
+            status_val = check.get("status")
+            if status_val == "qr_required":
+                alerts.report(code="WHATSAPP_QR_REQUIRED", severity="critical", component=component,
+                              summary_plain="WhatsApp requires a QR code scan. Open server logs (docker compose logs -f gateway) to link phone.",
+                              technical_detail=f"{component} returned status 'qr_required' at {COMPONENT_ENDPOINTS.get(component)}.",
+                              key=component)
+            elif status_val == "needs_login":
+                alerts.report(code="TELEGRAM_LOGIN_REQUIRED", severity="critical", component=component,
+                              summary_plain="Telegram requires phone/OTP login. Run 'docker compose run --rm tg-bridge python main_telegram.py' on server.",
+                              technical_detail=f"{component} reported not authorized at {COMPONENT_ENDPOINTS.get(component)}.",
+                              key=component)
+            else:
+                alerts.report(code="SERVICE_DOWN", severity="critical", component=component,
+                              summary_plain=f"{label} is not responding. Client messages may not be reaching the team.",
+                              technical_detail=f"{component} failed its health check (status: {status_val}) at "
+                                                f"{COMPONENT_ENDPOINTS.get(component, 'the PostgreSQL pool')}.",
+                              key=component)
     return state
 
 

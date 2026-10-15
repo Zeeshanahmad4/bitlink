@@ -403,10 +403,14 @@ async function startSock() {
 
     sock.ev.on('creds.update', saveCreds);
 
+let isQrWaiting = false;
+
     sock.ev.on('connection.update', ({ qr, connection, lastDisconnect }) => {
         if (qr) {
+            isQrWaiting = true;
             log('📱 QR Code received — scan with WhatsApp on your phone:');
             qrcode.generate(qr, { small: true });
+            notifyBridge('/whatsapp-status', { status: 'qr_required' });
         }
         if (connection === 'close') {
             isConnected = false;
@@ -416,13 +420,19 @@ async function startSock() {
             log(shouldReconnect
                 ? '🔌 Connection closed. Reconnecting...'
                 : '🔌 Connection closed. Logged out — not reconnecting.');
+            if (!shouldReconnect) {
+                isQrWaiting = true;
+                notifyBridge('/whatsapp-status', { status: 'logged_out' });
+            }
             if (shouldReconnect) setTimeout(startSock, 5000);
             return;
         }
 
         if (connection === 'open') {
             isConnected = true;
+            isQrWaiting = false;
             log('🎉 >>> WhatsApp is ready! (Baileys) <<<');
+            notifyBridge('/whatsapp-status', { status: 'ready' });
             registerMessageHandlers();
             scanUnmappedGroups();
         }
@@ -430,8 +440,14 @@ async function startSock() {
 }
 
 app.get('/health', (req, res) => {
+    let status = 'not_ready';
+    if (isConnected) {
+        status = 'ready';
+    } else if (isQrWaiting) {
+        status = 'qr_required';
+    }
     res.json({
-        status: isConnected ? 'ready' : 'not_ready',
+        status: status,
         clients: messageStore.size,
         timestamp: new Date().toISOString()
     });

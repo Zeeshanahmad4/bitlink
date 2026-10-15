@@ -615,17 +615,19 @@ async def handle_send_message(request):
         logging.error(f"Error in handle_send_message: {e}")
         return web.Response(status=500, text=f"Error: {e}")
 
+is_telethon_authorized = False
+
 async def handle_health(request):
     """Health check endpoint consumed by control_server.py's dashboard monitor."""
     snap = tg_snapshot()
-    # Must reflect the emergency stop. Reporting a hardcoded "ready" while
-    # traffic is halted makes the bridge report healthy during an outage, which
-    # stops the dashboard watcher from ever noticing.
+    is_ready = not snap.get("active") and is_telethon_authorized
+    status = "ready" if is_ready else ("needs_login" if not is_telethon_authorized else "not_ready")
     return web.json_response({
-        "status": "not_ready" if snap.get("active") else "ready",
-        "ok": not snap.get("active"),
+        "status": status,
+        "ok": is_ready,
         "bridge": "telegram",
         "clients": len(telegram_to_slack_map),
+        "authorized": is_telethon_authorized,
         "emergency_stop": snap,
     })
 
@@ -641,7 +643,7 @@ async def run_refresh_server():
     ])
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, 'localhost', TELEGRAM_REFRESH_PORT)
+    site = web.TCPSite(runner, '0.0.0.0', TELEGRAM_REFRESH_PORT)
     await site.start()
     logging.info(f"Telegram refresh server listening on port {TELEGRAM_REFRESH_PORT}")
     while True:
@@ -833,9 +835,24 @@ async def handle_telegram_message(event):
         logging.info(f"Delivery channel {slack_channel_id} is paused. Skipping Telegram→Slack forwarding.")
         return
 
-    client_name = client_info["client_name"]  # ← CRITICAL: Get client name from mapping
-
+    client_name = client_info.get("client_name")
     sender_name, pfp_path = await get_sender_details(event)
+
+    _BLANK_NAMES = {
+        "", ".", "..", "...", "-", "--", "?", "??", "!", "none", "null",
+        "undefined", "unknown", "unknown user", "new client", "new-client",
+        "user", "telegram-user", "telegram user"
+    }
+    raw_mapped = (client_name or "").strip()
+    raw_sender = (sender_name or "").strip()
+
+    if raw_mapped and raw_mapped.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", raw_mapped):
+        effective_name = raw_mapped
+    elif raw_sender and raw_sender.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", raw_sender):
+        effective_name = raw_sender
+    else:
+        effective_name = f"Client {str(chat_id)[-4:]}"
+
     message_text = event.message.text
 
     try:
@@ -858,9 +875,9 @@ async def handle_telegram_message(event):
                 file_name = Path(file_path).name
                 caption_text = message_text.strip() if message_text else ""
                 if caption_text:
-                    initial_comment = f"*{sender_name}:*\n{caption_text}"
+                    initial_comment = f"*{effective_name}:*\n{caption_text}"
                 else:
-                    initial_comment = f"*{sender_name}* sent a file: {file_name}"
+                    initial_comment = f"*{effective_name}* sent a file: {file_name}"
 
                 # Upload directly into the Slack channel using Telegram bot
                 upload_resp = None
@@ -875,9 +892,9 @@ async def handle_telegram_message(event):
                 except SlackApiError as e:
                     logging.error(f"Slack API error uploading file to Slack channel {slack_channel_id}: {e.response.get('error')}")
                     _report("MEDIA_UPLOAD_FAILED",
-                            f"A file from {sender_name} could not be processed.",
+                            f"A file from {effective_name} could not be processed.",
                             f"SlackApiError: {e.response.get('error')}",
-                            {"sender_name": sender_name, "chat_id": chat_id,
+                            {"sender_name": effective_name, "chat_id": chat_id,
                              "message_id": getattr(event.message, "id", None),
                              "slack_channel": slack_channel_id, "file_name": file_name,
                              "client_key": str(chat_id)},
@@ -885,9 +902,9 @@ async def handle_telegram_message(event):
                 except Exception as up_err:
                     logging.error(f"Critical error uploading file to Slack channel {slack_channel_id}: {up_err}")
                     _report("MEDIA_UPLOAD_FAILED",
-                            f"A file from {sender_name} could not be processed.",
+                            f"A file from {effective_name} could not be processed.",
                             f"{type(up_err).__name__}: {up_err}",
-                            {"sender_name": sender_name, "chat_id": chat_id,
+                            {"sender_name": effective_name, "chat_id": chat_id,
                              "message_id": getattr(event.message, "id", None),
                              "slack_channel": slack_channel_id, "file_name": file_name,
                              "client_key": str(chat_id)},
@@ -906,19 +923,19 @@ async def handle_telegram_message(event):
                             telegram_to_slack_message_map[map_key] = {
                                 "channel": slack_channel_id,
                                 "ts": slack_ts,
-                                "sender_name": sender_name
+                                "sender_name": effective_name
                             }
                             save_reverse_map()
 
-                    logging.info(f"Forwarded file '{file_name}' from '{sender_name}' to Slack channel {slack_channel_id}.")
+                    logging.info(f"Forwarded file '{file_name}' from '{effective_name}' to Slack channel {slack_channel_id}.")
                 else:
                     logging.error(f"Could not upload file '{file_name}' to Slack channel {slack_channel_id}.")
             except Exception as e:
                 logging.error(f"Error handling Telegram media message: {e}", exc_info=True)
                 _report("MEDIA_HANDLER_ERROR",
-                        f"A message from {sender_name} could not be delivered.",
+                        f"A message from {effective_name} could not be delivered.",
                         f"{type(e).__name__}: {e}",
-                        {"sender_name": sender_name, "chat_id": chat_id,
+                        {"sender_name": effective_name, "chat_id": chat_id,
                          "message_id": getattr(event.message, "id", None),
                          "slack_channel": slack_channel_id,
                          "client_key": str(chat_id)},
@@ -934,8 +951,8 @@ async def handle_telegram_message(event):
             # For text messages, we can customize the user profile
             slack_response = await slack_client.chat_postMessage(
                 channel=slack_channel_id,
-                text=f"{sender_name}: {message_text}",
-                username=sender_name,
+                text=f"{effective_name}: {message_text}",
+                username=effective_name,
                 icon_emoji=":robot_face:",
                 blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": message_text}}]
             )
@@ -947,13 +964,13 @@ async def handle_telegram_message(event):
                     telegram_to_slack_message_map[map_key] = {
                         "channel": slack_channel_id,
                         "ts": slack_ts,
-                        "sender_name": sender_name
+                        "sender_name": effective_name
                     }
                     if len(telegram_to_slack_message_map) > 10000:
                         oldest = next(iter(telegram_to_slack_message_map))
                         del telegram_to_slack_message_map[oldest]
                     save_reverse_map()
-            logging.info(f"Forwarded text from '{sender_name}' to Slack.")
+            logging.info(f"Forwarded text from '{effective_name}' to Slack.")
 
         if pfp_path and os.path.exists(pfp_path):
             os.remove(pfp_path) # Clean up profile picture
@@ -1697,8 +1714,34 @@ async def main():
             logging.error(f"[TG STOP] Could not read initial kill switch state: {e}")
         stop_watcher_task = asyncio.create_task(telegram_emergency_stop_watcher())
 
-        logging.info("Starting Telethon client...")
+        global is_telethon_authorized
+        logging.info("Connecting to Telegram...")
+        await telethon_client.connect()
+        is_auth = await telethon_client.is_user_authorized()
+        if not is_auth:
+            logging.error("❌ Telethon is NOT authorized! Phone number and OTP login are required.")
+            is_telethon_authorized = False
+            _report(
+                code="TELEGRAM_LOGIN_REQUIRED",
+                summary_plain="Telegram session is not authenticated. Please perform the one-time phone login on the server.",
+                technical_detail="Telethon is_user_authorized() is False. Run 'docker compose run --rm tg-bridge python main_telegram.py' on server.",
+                context={"client_key": "telegram_bridge_auth"},
+                severity="critical"
+            )
+            # Avoid EOFError crash in background mode: wait for interactive login
+            while not await telethon_client.is_user_authorized():
+                await asyncio.sleep(10)
+            logging.info("🎉 Telegram session is now authorized!")
+            _report(
+                code="SERVICE_RECOVERED",
+                summary_plain="Telegram session is now authenticated and operational.",
+                technical_detail="Telethon is_user_authorized() is now True.",
+                context={"client_key": "telegram_bridge_auth"},
+                severity="info"
+            )
+
         await telethon_client.start()
+        is_telethon_authorized = True
         me = await telethon_client.get_me()
         if me is None:
             logging.warning("Telethon get_me() returned None — session may not be fully authorized yet. Retrying once...")

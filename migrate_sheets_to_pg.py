@@ -27,7 +27,7 @@ import gspread
 import db
 
 CREDENTIALS_FILE = os.getenv("SHEETS_CREDENTIALS_FILE", "credentials/service_account.json")
-SPREADSHEET_NAME = "BitLink Client Mappings"
+SPREADSHEET_NAME = os.getenv("SPREADSHEET_NAME", "BitLink Client Mappings")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -249,10 +249,9 @@ def migrate_auth(sp) -> int:
         import psycopg2.extras
         psycopg2.extras.execute_values(cur, """
             INSERT INTO dashboard_users (id, password_hash) VALUES %s
-            ON CONFLICT (id) DO UPDATE
-                SET password_hash = EXCLUDED.password_hash, updated_at = NOW()
+            ON CONFLICT (id) DO NOTHING
         """, data)
-    logging.info(f"dashboard_users: {len(data)} rows")
+    logging.info(f"dashboard_users: {len(data)} rows processed (existing users preserved)")
     return len(data)
 
 
@@ -404,10 +403,10 @@ def main() -> int:
         )
         return 2
 
-    logging.info("Truncating target tables for a clean re-sync from Sheets...")
+    logging.info("Truncating data tables (preserving dashboard_users) for a clean re-sync from Sheets...")
     db.run_script("""
         TRUNCATE client_mappings, sales_leads, sales_pool, blocklist,
-                 project_managers, snippets, settings, dashboard_users
+                 project_managers, snippets, settings, critical_alerts, alert_details
         RESTART IDENTITY CASCADE;
     """)
 
@@ -419,6 +418,13 @@ def main() -> int:
     migrate_settings(sp)
     migrate_snippets(sp)
     migrate_auth(sp)
+
+    try:
+        from control_server import dispatch_bridge_refresh
+        dispatch_bridge_refresh()
+        logging.info("Triggered real-time bridge refresh for all imported mappings.")
+    except Exception:
+        pass
 
     logging.info("Migration complete. Google Sheets left untouched as rollback target.")
     return 0 if verify(sp) else 1

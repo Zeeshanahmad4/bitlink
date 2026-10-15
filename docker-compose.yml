@@ -1,11 +1,30 @@
-version: '3.8'
-
 # ============================================================
-# BitLink — Docker Compose (Scenario A: Host Database Mode)
-# Connects to PostgreSQL running directly on the host machine via host.docker.internal
+# BitLink — Docker Compose (Internal Container Database Mode)
+# Runs PostgreSQL in an isolated 'db' container with persistent volume.
 # ============================================================
 
 services:
+
+  # ----------------------------------------------------------
+  # PostgreSQL 15 — sole CRM data store (isolated internal container)
+  # ----------------------------------------------------------
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: bitlink
+      POSTGRES_USER: bitlink
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-Abdulhanan111@}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    networks:
+      - bitlink-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bitlink -d bitlink"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   # ----------------------------------------------------------
   # WhatsApp Baileys Gateway — Node.js, port 3101 (internal)
@@ -26,7 +45,7 @@ services:
       - bitlink-net
 
   # ----------------------------------------------------------
-  # Flask Control Dashboard — served on 0.0.0.0:5050
+  # Flask Control Dashboard — served on 0.0.0.0:5051
   # ----------------------------------------------------------
   dashboard:
     build:
@@ -37,16 +56,19 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://bitlink:Abdulhanan111%40@host.docker.internal:5432/bitlink
+      DATABASE_URL: ${DATABASE_URL:-postgresql://bitlink:Abdulhanan111%40@db:5432/bitlink}
       NODE_API_URL: http://gateway:3101
+      GATEWAY_HOST: gateway
+      WHATSAPP_BRIDGE_HOST: wa-bridge
+      TELEGRAM_BRIDGE_HOST: tg-bridge
       WHATSAPP_REFRESH_PORT: ${WHATSAPP_REFRESH_PORT:-8102}
       TELEGRAM_REFRESH_PORT: ${TELEGRAM_REFRESH_PORT:-8004}
       CONTROL_DASHBOARD_PORT: ${CONTROL_DASHBOARD_PORT:-5051}
     ports:
       - "${CONTROL_DASHBOARD_PORT:-5051}:${CONTROL_DASHBOARD_PORT:-5051}"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
+      db:
+        condition: service_healthy
       gateway:
         condition: service_started
     networks:
@@ -64,13 +86,13 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://bitlink:Abdulhanan111%40@host.docker.internal:5432/bitlink
+      DATABASE_URL: ${DATABASE_URL:-postgresql://bitlink:Abdulhanan111%40@db:5432/bitlink}
       NODE_API_URL: http://gateway:3101
       WHATSAPP_REFRESH_PORT: ${WHATSAPP_REFRESH_PORT:-8102}
       TZ: Asia/Karachi
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
+      db:
+        condition: service_healthy
       gateway:
         condition: service_started
     networks:
@@ -88,12 +110,13 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://bitlink:Abdulhanan111%40@host.docker.internal:5432/bitlink
+      DATABASE_URL: ${DATABASE_URL:-postgresql://bitlink:Abdulhanan111%40@db:5432/bitlink}
       TELEGRAM_REFRESH_PORT: ${TELEGRAM_REFRESH_PORT:-8004}
     volumes:
       - ./sessions:/app/sessions
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
     networks:
       - bitlink-net
 
@@ -109,9 +132,14 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://bitlink:Abdulhanan111%40@host.docker.internal:5432/bitlink
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://bitlink:Abdulhanan111%40@db:5432/bitlink}
+      WHATSAPP_BRIDGE_HOST: wa-bridge
+      TELEGRAM_BRIDGE_HOST: tg-bridge
+      WHATSAPP_REFRESH_PORT: ${WHATSAPP_REFRESH_PORT:-8102}
+      TELEGRAM_REFRESH_PORT: ${TELEGRAM_REFRESH_PORT:-8004}
+    depends_on:
+      db:
+        condition: service_healthy
     networks:
       - bitlink-net
 
@@ -127,13 +155,24 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://bitlink:Abdulhanan111%40@host.docker.internal:5432/bitlink
+      DATABASE_URL: ${DATABASE_URL:-postgresql://bitlink:Abdulhanan111%40@db:5432/bitlink}
       TZ: Asia/Karachi
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
     networks:
       - bitlink-net
 
+# ============================================================
+# Volumes — persistent database storage
+# ============================================================
+volumes:
+  pg_data:
+    driver: local
+
+# ============================================================
+# Networks
+# ============================================================
 networks:
   bitlink-net:
     driver: bridge

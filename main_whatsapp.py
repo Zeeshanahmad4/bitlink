@@ -902,9 +902,24 @@ def poll_whatsapp_and_forward(web_client: WebClient):
                         logging.info(f"Delivery channel {slack_channel} is paused. Skipping forwarding.")
                         continue
 
-                    sender_name = msg.get('senderName')
-                    mapped_name = client_info["client_name"]
-                    display_name = sender_name if sender_name else mapped_name
+                    _BLANK_NAMES = {
+                        "", ".", "..", "...", "-", "--", "?", "??", "!", "none", "null",
+                        "undefined", "unknown", "unknown user", "new client", "new-client",
+                        "user", "telegram user"
+                    }
+                    sender_name = (msg.get('senderName') or '').strip()
+                    mapped_name = (client_info.get("client_name") or '').strip()
+
+                    # 1. Prefer mapped name if set and not a generic/dot placeholder
+                    if mapped_name and mapped_name.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", mapped_name):
+                        display_name = mapped_name
+                    # 2. Otherwise use sender's WhatsApp profile name if meaningful
+                    elif sender_name and sender_name.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", sender_name):
+                        display_name = sender_name
+                    # 3. Clean fallback to Client {last4} instead of '.' or 'Unknown'
+                    else:
+                        digits = re.sub(r"\D", "", chat_id.split("@")[0])
+                        display_name = f"Client {digits[-4:]}" if len(digits) >= 4 else f"Client {chat_id}"
 
                     content = msg.get('body', '')
                     quoted_body = msg.get('quotedBody')
@@ -2119,6 +2134,32 @@ def run_refresh_server():
 
 # --- Flask endpoint for WhatsApp→Slack edit sync ---
 from flask import request
+
+@app.route('/whatsapp-status', methods=['POST'])
+def whatsapp_status_endpoint():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        status = data.get('status')
+        if status in ('qr_required', 'logged_out'):
+            _report(
+                code="WHATSAPP_QR_REQUIRED",
+                summary_plain="WhatsApp is disconnected and requires a QR code scan. Messages cannot be delivered until scanned.",
+                technical_detail="Baileys gateway emitted an authentication challenge. Scan QR via 'docker compose logs -f gateway' or link on dashboard.",
+                context={"client_key": "whatsapp_gateway_auth", "status": status},
+                severity="critical"
+            )
+        elif status == 'ready':
+            _report(
+                code="SERVICE_RECOVERED",
+                summary_plain="WhatsApp connection is restored and fully operational.",
+                technical_detail="WhatsApp Baileys connection is open and ready to process messages.",
+                context={"client_key": "whatsapp_gateway_auth"},
+                severity="info"
+            )
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Error handling whatsapp-status: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/whatsapp-edit', methods=['POST'])
 def whatsapp_edit_endpoint():

@@ -44,14 +44,25 @@ if web_client:
     except Exception as e:
         logging.warning(f"Manager Bot auth_test check: {e}")
 
+WA_BRIDGE_HOST = os.getenv("WHATSAPP_BRIDGE_HOST", "wa-bridge" if os.path.exists("/.dockerenv") else "127.0.0.1")
+TG_BRIDGE_HOST = os.getenv("TELEGRAM_BRIDGE_HOST", "tg-bridge" if os.path.exists("/.dockerenv") else "127.0.0.1")
+
 # Function to trigger refresh on all apps
 def trigger_refresh_all_apps():
-    for port in [WHATSAPP_REFRESH_PORT, TELEGRAM_REFRESH_PORT]:
+    targets = [
+        ("WhatsApp", WA_BRIDGE_HOST, WHATSAPP_REFRESH_PORT),
+        ("Telegram", TG_BRIDGE_HOST, TELEGRAM_REFRESH_PORT)
+    ]
+    for name, host, port in targets:
         try:
-            requests.post(f"http://127.0.0.1:{port}/refresh", json={}, timeout=2)
-            logging.info(f"Triggered refresh on port {port}")
-        except Exception as e:
-            logging.warning(f"Failed to refresh port {port}: {e}")
+            requests.post(f"http://{host}:{port}/refresh", json={}, timeout=2)
+            logging.info(f"Triggered refresh on {name} ({host}:{port})")
+        except Exception:
+            try:
+                requests.post(f"http://127.0.0.1:{port}/refresh", json={}, timeout=1)
+                logging.info(f"Triggered fallback refresh on 127.0.0.1:{port}")
+            except Exception as e:
+                logging.warning(f"Failed to refresh {name} on {host}:{port}: {e}")
 
 def handle_slack_slash_commands(client: SocketModeClient, req, web_client: WebClient):
     """Unified handler for all Slack slash commands with instant (< 5ms) SocketModeResponse ACK."""
