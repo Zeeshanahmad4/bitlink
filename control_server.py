@@ -1834,10 +1834,11 @@ COMPONENT_ENDPOINTS = {
     "telegram_bridge": f"http://{TG_BRIDGE_HOST}:{TG_PORT}",
 }
 COMPONENT_LABELS = {
-    "whatsapp_gateway": "The WhatsApp session (Node gateway)",
-    "whatsapp_bridge": "The WhatsApp connection",
-    "telegram_bridge": "The Telegram connection",
-    "postgres": "The system database",
+    "whatsapp_gateway": "WhatsApp Gateway (Node)",
+    "whatsapp_bridge": "WhatsApp Bridge",
+    "telegram_bridge": "Telegram Bridge",
+    "ai_jobs": "AI Background Jobs",
+    "bitlink_manager": "BitLink Slack Manager",
 }
 _watch_state: Dict[str, bool] = {}
 
@@ -1871,52 +1872,89 @@ def _check_service(component: str, base_url: str) -> Dict[str, Any]:
 def _watch_once() -> Dict[str, bool]:
     checks: Dict[str, Dict[str, Any]] = {}
 
+    # 1-3: HTTP endpoints (Gateway, WA Bridge, TG Bridge)
     for component, url in COMPONENT_ENDPOINTS.items():
         checks[component] = _check_service(component, url)
 
+    # 4-5: PostgreSQL heartbeat checks for background workers (ai_jobs, bitlink_manager)
     try:
-        pg_ok = db.is_available()
-        checks["postgres"] = {"healthy": pg_ok, "status": "ready" if pg_ok else "unreachable"}
+        hb_data = db_store.get_service_heartbeats()
     except Exception as e:
-        checks["postgres"] = {"healthy": False, "status": "unreachable", "error": str(e)}
+        hb_data = {}
+        logging.error(f"Watcher could not fetch heartbeats: {e}")
+
+    for bg_svc in ("ai_jobs", "bitlink_manager"):
+        svc_hb = hb_data.get(bg_svc)
+        # Allow up to 60s silence (services touch heartbeat every 20-30s)
+        if svc_hb and svc_hb.get("seconds_ago", 999) < 60:
+            checks[bg_svc] = {"healthy": True, "status": "ready", "details": svc_hb}
+        else:
+            sec = svc_hb.get("seconds_ago") if svc_hb else "no heartbeat"
+            checks[bg_svc] = {
+                "healthy": False,
+                "status": "heartbeat_timeout",
+                "details": f"Last seen {sec}s ago (threshold: 60s)"
+            }
 
     state: Dict[str, bool] = {}
 
-    # Only transitions are reported, so a service that stays down does not post
-    # on every tick, and a flapping service does not flood the channel.
     for component, check in checks.items():
         healthy = check["healthy"]
         state[component] = healthy
         previous = _watch_state.get(component)
         _watch_state[component] = healthy
+
+        # Initial pass on startup: if already healthy, stay silent
         if previous is None and healthy:
             continue
-        if previous is not None and previous == healthy:
-            continue
+
         label = COMPONENT_LABELS.get(component, component)
+
         if healthy:
-            alerts.report(code="SERVICE_RECOVERED", severity="info", component=component,
-                          summary_plain=f"{label} is working again.",
-                          technical_detail=f"{component} recovered and is answering health checks.",
-                          key=component)
+            # Service just recovered from an unhealthy state
+            if previous is False:
+                alerts.report(
+                    code="SERVICE_RECOVERED",
+                    severity="info",
+                    component=component,
+                    summary_plain=f"{label} is operational and answering checks.",
+                    technical_detail=f"{component} recovered and is healthy.",
+                    key=component
+                )
         else:
+            # Service is currently down or requires auth
             status_val = check.get("status")
             if status_val == "qr_required":
-                alerts.report(code="WHATSAPP_QR_REQUIRED", severity="critical", component=component,
-                              summary_plain="WhatsApp requires a QR code scan. Open server logs (docker compose logs -f gateway) to link phone.",
-                              technical_detail=f"{component} returned status 'qr_required' at {COMPONENT_ENDPOINTS.get(component)}.",
-                              key=component)
+                alerts.report(
+                    code="WHATSAPP_QR_REQUIRED",
+                    severity="critical",
+                    component=component,
+                    summary_plain=f"{label} requires a QR code scan to reconnect.",
+                    technical_detail=f"{component} returned status 'qr_required'.",
+                    context={"action": "docker compose logs -f gateway"},
+                    key=component
+                )
             elif status_val == "needs_login":
-                alerts.report(code="TELEGRAM_LOGIN_REQUIRED", severity="critical", component=component,
-                              summary_plain="Telegram requires phone/OTP login. Run 'docker compose run --rm tg-bridge python main_telegram.py' on server.",
-                              technical_detail=f"{component} reported not authorized at {COMPONENT_ENDPOINTS.get(component)}.",
-                              key=component)
+                alerts.report(
+                    code="TELEGRAM_LOGIN_REQUIRED",
+                    severity="critical",
+                    component=component,
+                    summary_plain=f"{label} session is not authorized. Phone OTP login is required.",
+                    technical_detail=f"{component} reported not authorized.",
+                    context={"action": "docker compose run --rm -it tg-bridge python auth_telegram.py"},
+                    key=component
+                )
             else:
-                alerts.report(code="SERVICE_DOWN", severity="critical", component=component,
-                              summary_plain=f"{label} is not responding. Client messages may not be reaching the team.",
-                              technical_detail=f"{component} failed its health check (status: {status_val}) at "
-                                                f"{COMPONENT_ENDPOINTS.get(component, 'the PostgreSQL pool')}.",
-                              key=component)
+                detail_msg = check.get("error") or str(check.get("details") or status_val)
+                alerts.report(
+                    code="SERVICE_DOWN",
+                    severity="critical",
+                    component=component,
+                    summary_plain=f"{label} is OFF / Not Responding.",
+                    technical_detail=f"{component} failed check: {detail_msg}",
+                    key=component
+                )
+
     return state
 
 
@@ -1930,9 +1968,6 @@ def _watch_loop() -> None:
             # The watcher must outlive any single failure inside it.
             logging.error(f"Service watcher pass failed: {e}")
             consecutive_failures += 1
-            # A pass that keeps failing is worse than a logged line: it means
-            # nothing is being monitored at all while everything looks fine.
-            # Alert once the failure is clearly persistent rather than a blip.
             if consecutive_failures == WATCH_FAILURE_ALERT_AFTER:
                 alerts.report(
                     code="SERVICE_WATCHER_BROKEN", severity="critical",
@@ -1947,6 +1982,7 @@ def _watch_loop() -> None:
 
 
 def start_watcher() -> threading.Thread:
+    db_store.ensure_heartbeats_table()
     thread = threading.Thread(target=_watch_loop, name="service-watcher", daemon=True)
     thread.start()
     logging.info(f"Service watcher started (every {WATCH_INTERVAL_SECONDS}s).")

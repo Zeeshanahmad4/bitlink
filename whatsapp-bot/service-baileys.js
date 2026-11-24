@@ -115,30 +115,9 @@ async function handleNewGroup(groupId, groupName) {
         saveNotifiedGroups();
 
         const displayName = groupName || groupId;
-        log(`🚀 New group detected: "${displayName}" (${groupId}). Sending notification.`);
-
-        if (!SLACK_BOT_TOKEN) { log('❌ SLACK_BOT_TOKEN is not set.'); return; }
-        if (!SLACK_ADMIN_CHANNEL) { log('❌ SLACK_ADMIN_CHANNEL_ID is not set.'); return; }
-
-        const slackMessage = {
-            channel: SLACK_ADMIN_CHANNEL,
-            text: `BitLink Bot has a new WhatsApp group: *${displayName}*`,
-            blocks: [
-                { type: "section", text: { type: "mrkdwn", text: `🚀 BitLink Bot has a new WhatsApp group: *${displayName}*` } },
-                {
-                    type: "section", fields: [
-                        { type: "mrkdwn", text: `*Group Name:*\n${displayName}` },
-                        { type: "mrkdwn", text: `*Group ID (for /add-client):*\n\`${groupId}\`` }
-                    ]
-                }
-            ]
-        };
-        await axios.post('https://slack.com/api/chat.postMessage', slackMessage, {
-            headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` }
-        });
-        log(`📬 Successfully sent notification to Slack for group "${displayName}".`);
+        log(`🚀 New group detected: "${displayName}" (${groupId}). Tracked locally; Slack alert suppressed per alerts restructuring.`);
     } catch (error) {
-        log(`❌ Failed to process new group notification:`, error);
+        log(`❌ Failed to process new group tracking:`, error);
     }
 }
 
@@ -291,6 +270,7 @@ function registerMessageHandlers() {
                         timestamp: msg.messageTimestamp,
                         quotedBody, messageId: msgId,
                         senderName,
+                        participant: msg.key.participant || null,
                         groupName: groupName || null,
                         isGroup: isGroup,
                         media
@@ -303,6 +283,7 @@ function registerMessageHandlers() {
                     timestamp: msg.messageTimestamp,
                     quotedBody, messageId: msgId,
                     senderName,
+                    participant: msg.key.participant || null,
                     groupName: groupName || null,
                     isGroup: isGroup,
                     media: null

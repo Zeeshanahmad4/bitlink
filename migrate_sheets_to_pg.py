@@ -38,8 +38,19 @@ TS_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d")
 
 
 def as_bool(val: Any) -> bool:
-    """Google Sheets has no booleans — everything arrives as a string."""
-    return str(val).strip().lower() in ("true", "1", "yes", "y", "t")
+    """
+    Parses boolean values from Google Sheets:
+    - 'TRUE', 'true', True, '1', 'yes' -> True (Channel paused)
+    - Blank (''), None, 'FALSE', 'false', False, '0', 'no' -> False (Channel active)
+    """
+    if val is None:
+        return False
+    if isinstance(val, bool):
+        return val
+    s = str(val).strip().lower()
+    if s in ("", "false", "0", "no", "none", "null"):
+        return False
+    return s in ("true", "1", "yes", "y", "t")
 
 
 def as_text(val: Any) -> str:
@@ -305,9 +316,13 @@ def migrate_snippets(sp) -> int:
 
 
 def migrate_auth(sp) -> int:
-    """Hash plaintext passwords from the legacy sheet. The plaintext is never
-    written to PostgreSQL and is not echoed to the log."""
-    records = rows_of(sp.worksheet("auth"))
+    """Hash plaintext passwords from the legacy sheet if present. If not present,
+    existing PostgreSQL dashboard users are kept untouched."""
+    ws = get_worksheet_safely(sp, "auth")
+    if ws is None:
+        logging.info("Worksheet 'auth' not present; keeping existing PostgreSQL dashboard_users.")
+        return 0
+    records = rows_of(ws)
     data = []
     for r in records:
         uid = as_text(r.get("id"))
@@ -413,11 +428,12 @@ def compare_values(sp):
             problems.append(("client_mappings",
                              "external_id=%s client_name: sheets=%r postgres=%r"
                              % (key[0], c_name, norm(p.get("client_name")))))
-        p_val = norm(get_col(s, "paused"))
-        if p_val != norm(p.get("paused")):
+        p_sheet = as_bool(get_col(s, "paused"))
+        p_pg = as_bool(p.get("paused"))
+        if p_sheet != p_pg:
             problems.append(("client_mappings",
                              "external_id=%s paused: sheets=%r postgres=%r"
-                             % (key[0], p_val, norm(p.get("paused")))))
+                             % (key[0], p_sheet, p_pg)))
 
     return problems
 

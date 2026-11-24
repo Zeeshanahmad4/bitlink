@@ -999,6 +999,19 @@ def process_socket_mode_events():
 
     socket_client.socket_mode_request_listeners.append(process)
     
+    # Start heartbeat daemon for BitLink Manager
+    import time
+    def _manager_hb_worker():
+        while True:
+            try:
+                db_store.record_heartbeat("bitlink_manager")
+            except Exception as e:
+                logging.error(f"BitLink Manager heartbeat error: {e}")
+            time.sleep(20)
+
+    threading.Thread(target=_manager_hb_worker, name="manager-heartbeat", daemon=True).start()
+    logging.info("Heartbeat worker started for BitLink Manager (every 20s).")
+
     try:
         socket_client.connect()
         logging.info("🚀 BitLink Manager Connected to Slack Socket Mode!")

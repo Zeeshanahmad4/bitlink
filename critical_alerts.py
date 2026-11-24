@@ -54,14 +54,30 @@ DEDUP_WINDOW_SECONDS = 300
 # without this a long outage repeats the same message dozens of times and the
 # channel becomes noise that people stop reading.
 MAX_POSTS_PER_ALERT = 5
-# Minimum gap between those repeat posts, so the five allowed posts are spread
-# over the life of an outage instead of arriving as a burst in the first minutes.
-REPOST_INTERVAL_SECONDS = 1800
+# Minimum gap between repeat posts: 5 minutes (300 seconds)
+REPOST_INTERVAL_SECONDS = 300
 # Absolute ceiling per component per window, regardless of distinct fingerprints.
 RATE_CAP = 20
 
+# Pure status alerting: only core service uptime/downtime and auth alerts post to Slack.
+# All other errors are stored in PostgreSQL only for forensic debugging.
+ALLOWED_SLACK_ALERT_CODES = {
+    "SERVICE_DOWN",
+    "SERVICE_RECOVERED",
+    "WHATSAPP_QR_REQUIRED",
+    "TELEGRAM_LOGIN_REQUIRED"
+}
+
 _client_cache: Dict[str, Any] = {}
 _post_state: Dict[str, Dict[str, Any]] = {}
+
+
+def clear_alert_state(component: str) -> None:
+    """Clear posting history for a component when it recovers, resetting post counts."""
+    for key in list(_post_state.keys()):
+        if component in key:
+            _post_state.pop(key, None)
+
 
 
 # ---------------------------------------------------------------------------
@@ -417,20 +433,25 @@ def _buffer_to_file(entry: Dict[str, Any]) -> None:
 def _post_to_channel(client: Any, channel_id: str, severity: str, code: str,
                      component: str, summary_plain: str, technical_detail: str,
                      tb_text: Optional[str], context: Dict[str, Any],
-                     alert_id: Optional[int]) -> Optional[str]:
-    header = f":rotating_light: *{severity.upper()}* — `{code}` ({component})"
-    lines = [header, "", f"*Sales-facing:* {summary_plain}"]
-    if context:
-        ctx = json.dumps(context, default=str)
-        if len(ctx) > 800:
-            ctx = ctx[:800] + "…"
-        lines.append(f"*Context:* ```{ctx}```")
-    lines.append(f"*Technical:* ```{technical_detail}```")
-    if tb_text:
-        trimmed = tb_text if len(tb_text) <= 1500 else tb_text[-1500:]
-        lines.append("*Traceback:*\n```" + trimmed + "```")
-    if alert_id:
-        lines.append(f"_Dashboard alert id: {alert_id}_")
+                     alert_id: Optional[int], post_number: int = 1) -> Optional[str]:
+    # Humanized titles and status formatting
+    post_count_str = f" ({post_number}/{MAX_POSTS_PER_ALERT})" if post_number else ""
+    if code == "SERVICE_RECOVERED":
+        header = f":large_green_circle: *RESOLVED: SERVICE BACK* — `{component}`"
+    elif code == "WHATSAPP_QR_REQUIRED":
+        header = f":iphone: *ALERT: WHATSAPP QR SCAN REQUIRED*{post_count_str} — `{component}`"
+    elif code == "TELEGRAM_LOGIN_REQUIRED":
+        header = f":key: *ALERT: TELEGRAM LOGIN REQUIRED*{post_count_str} — `{component}`"
+    else:
+        header = f":red_circle: *ALERT: SERVICE DOWN*{post_count_str} — `{component}`"
+
+    lines = [header, "", f"*Status:* {summary_plain}"]
+    if technical_detail and technical_detail != summary_plain:
+        lines.append(f"*Details:* ```{technical_detail}```")
+    if context and context.get("action"):
+        lines.append(f"*Action Required:* `{context['action']}`")
+    if post_number and post_number >= MAX_POSTS_PER_ALERT:
+        lines.append("_Final reminder. Further alerts silenced until service recovers._")
 
     resp = client.chat_postMessage(channel=channel_id, text="\n".join(lines))
     if not resp.get("ok"):
@@ -440,25 +461,11 @@ def _post_to_channel(client: Any, channel_id: str, severity: str, code: str,
 
 
 def _should_post(state: Dict[str, Any], occurrences: int, is_new: bool) -> bool:
-    """Apply the per-alert post budget and the component rate cap.
-
-    The budget is counted in successful posts, not in detections. Detection runs
-    every 30s, so keying the cap off occurrences would either allow far more
-    than five messages or silence the alert almost immediately. Counting real
-    posts means an alert is announced at most MAX_POSTS_PER_ALERT times and then
-    stays quiet, while still being re-announced while it remains unresolved.
-
-    ``last_post`` lives in an in-memory dict that resets on every process
-    restart. When it is None it means either (a) the alert is brand new, or
-    (b) this process has never posted it — in both cases we should post so
-    that a restart does not permanently silence a pre-existing open alert.
-    """
+    """Apply the per-alert post budget and the component rate cap."""
     if state.get("posts", 0) >= MAX_POSTS_PER_ALERT:
         return False
     now = time.time()
     last = state.get("last_post")
-    # No posting history in this process — always notify so restarts don't
-    # silence alerts that were already firing before the restart.
     if last is None:
         return True
     if now - last >= REPOST_INTERVAL_SECONDS:
@@ -474,9 +481,6 @@ def report(code: str, severity: str = "critical", component: str = "dashboard",
     Never raises. The PostgreSQL write and the Slack post are attempted
     independently so that one being down does not suppress the other, and an
     unstoreable alert is buffered to a file for replay.
-
-    summary_plain is what sales will read: no exception names, no IDs, no jargon.
-    technical_detail is the full truth for the developer channel.
     """
     out: Dict[str, Any] = {"stored": False, "posted": False, "alert_id": None,
                           "occurrences": 1, "reason": None}
@@ -518,6 +522,14 @@ def report(code: str, severity: str = "critical", component: str = "dashboard",
             "technical_detail": technical_detail, "context": context,
             "fingerprint": fingerprint, "traceback": tb_text})
 
+    # Pure status alerting: only allowed codes reach Slack. All other errors are stored in PG only.
+    if code not in ALLOWED_SLACK_ALERT_CODES:
+        out["reason"] = "suppressed_non_status"
+        return out
+
+    if code == "SERVICE_RECOVERED":
+        clear_alert_state(component)
+
     channel_ids = error_channel_ids()
     client = get_client()
     if not channel_ids:
@@ -535,12 +547,13 @@ def report(code: str, severity: str = "critical", component: str = "dashboard",
         out["reason"] = "deduped"
         return out
 
+    current_post_number = state.get("posts", 0) + 1
     permalinks: List[str] = []
     for cid in channel_ids:
         try:
             plink = _post_to_channel(client, cid, severity, code, component,
                                      summary_plain, technical_detail, tb_text, context,
-                                     out["alert_id"])
+                                     out["alert_id"], post_number=current_post_number)
             if plink:
                 permalinks.append(plink)
         except Exception as e:

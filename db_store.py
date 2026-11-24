@@ -1321,3 +1321,58 @@ def delete_dashboard_user(user_id: str) -> Dict[str, Any]:
     except Exception as e:
         logging.error(f"Failed to delete dashboard user '{user_id}': {e}")
         return {"ok": False, "error": str(e)}
+
+
+# ==============================================================================
+# Service Heartbeats (AI Jobs, BitLink Manager)
+# ==============================================================================
+
+def ensure_heartbeats_table() -> None:
+    """Ensures service_heartbeats exists in the active database."""
+    try:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS service_heartbeats (
+                service_name VARCHAR(64) PRIMARY KEY,
+                last_seen    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                status       VARCHAR(16) NOT NULL DEFAULT 'running'
+            )
+        """)
+    except Exception as e:
+        logging.error(f"Could not ensure service_heartbeats table: {e}")
+
+
+def record_heartbeat(service_name: str, status: str = "running") -> bool:
+    """Touch the heartbeat timestamp for a background service. Never raises."""
+    try:
+        db.execute("""
+            INSERT INTO service_heartbeats (service_name, last_seen, status)
+            VALUES (%s, NOW(), %s)
+            ON CONFLICT (service_name)
+            DO UPDATE SET last_seen = NOW(), status = EXCLUDED.status
+        """, (service_name, status))
+        return True
+    except Exception as e:
+        logging.error(f"Failed to record heartbeat for {service_name}: {e}")
+        return False
+
+
+def get_service_heartbeats() -> Dict[str, Dict[str, Any]]:
+    """Return latest heartbeat status and age for all registered services."""
+    try:
+        rows = db.query_all("""
+            SELECT service_name, last_seen, status,
+                   EXTRACT(EPOCH FROM (NOW() - last_seen)) AS seconds_ago
+            FROM service_heartbeats
+        """)
+        return {
+            r["service_name"]: {
+                "last_seen": r["last_seen"],
+                "status": r["status"],
+                "seconds_ago": float(r["seconds_ago"] or 0)
+            }
+            for r in rows
+        }
+    except Exception as e:
+        logging.error(f"Failed to query service heartbeats: {e}")
+        return {}
+

@@ -909,17 +909,30 @@ def poll_whatsapp_and_forward(web_client: WebClient):
                     }
                     sender_name = (msg.get('senderName') or '').strip()
                     mapped_name = (client_info.get("client_name") or '').strip()
+                    is_group = bool(msg.get('isGroup') or (chat_id and chat_id.endswith('@g.us')))
 
-                    # 1. Prefer mapped name if set and not a generic/dot placeholder
-                    if mapped_name and mapped_name.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", mapped_name):
-                        display_name = mapped_name
-                    # 2. Otherwise use sender's WhatsApp profile name if meaningful
-                    elif sender_name and sender_name.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", sender_name):
-                        display_name = sender_name
-                    # 3. Clean fallback to Client {last4} instead of '.' or 'Unknown'
+                    if is_group:
+                        # In groups: Always show the individual participant who sent the message
+                        if sender_name and sender_name.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", sender_name):
+                            display_name = sender_name
+                        elif msg.get('participant'):
+                            p_num = re.sub(r"\D", "", str(msg.get('participant')).split("@")[0])
+                            display_name = f"+{p_num}" if p_num else (mapped_name or f"Member {chat_id[-4:]}")
+                        elif mapped_name and mapped_name.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", mapped_name):
+                            display_name = mapped_name
+                        else:
+                            display_name = "Group Member"
                     else:
-                        digits = re.sub(r"\D", "", chat_id.split("@")[0])
-                        display_name = f"Client {digits[-4:]}" if len(digits) >= 4 else f"Client {chat_id}"
+                        # 1-on-1 direct chat: Prefer mapped name if set and not a generic/dot placeholder
+                        if mapped_name and mapped_name.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", mapped_name):
+                            display_name = mapped_name
+                        # Otherwise use sender's WhatsApp profile name if meaningful
+                        elif sender_name and sender_name.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", sender_name):
+                            display_name = sender_name
+                        # Clean fallback to Client {last4} instead of '.' or 'Unknown'
+                        else:
+                            digits = re.sub(r"\D", "", chat_id.split("@")[0])
+                            display_name = f"Client {digits[-4:]}" if len(digits) >= 4 else f"Client {chat_id}"
 
                     content = msg.get('body', '')
                     quoted_body = msg.get('quotedBody')

@@ -256,6 +256,21 @@ if __name__ == "__main__":
         schedule.every().day.at("03:00").do(run_auto_archive_job)
         logging.info("Scheduled Auto-Archive job to run every day at 03:00")
 
+        # Start heartbeat daemon
+        import threading
+        def _heartbeat_worker():
+            while True:
+                try:
+                    db_store.record_heartbeat("ai_jobs")
+                except Exception as e:
+                    logging.error(f"AI jobs heartbeat error: {e}")
+                time.sleep(20)
+
+        hb_thread = threading.Thread(target=_heartbeat_worker, name="ai-jobs-heartbeat", daemon=True)
+        hb_thread.start()
+        logging.info("Heartbeat worker started for AI Jobs (every 20s).")
+
         while True:
             schedule.run_pending()
-            time.sleep(60)
+            time.sleep(1)
+

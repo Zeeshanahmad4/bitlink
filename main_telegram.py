@@ -42,7 +42,6 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-setup_slack_logging()
 # Load configuration from environment - TELEGRAM SPECIFIC TOKENS
 API_ID = os.getenv('API_ID')
 API_HASH = os.getenv('API_HASH')
@@ -620,14 +619,22 @@ is_telethon_authorized = False
 async def handle_health(request):
     """Health check endpoint consumed by control_server.py's dashboard monitor."""
     snap = tg_snapshot()
-    is_ready = not snap.get("active") and is_telethon_authorized
-    status = "ready" if is_ready else ("needs_login" if not is_telethon_authorized else "not_ready")
+    authorized = False
+    try:
+        if telethon_client is not None and telethon_client.is_connected():
+            authorized = await asyncio.wait_for(telethon_client.is_user_authorized(), timeout=2.0)
+    except Exception as e:
+        logging.warning(f"Could not verify telethon authorization in health check: {e}")
+        authorized = False
+
+    is_ready = not snap.get("active") and authorized
+    status = "ready" if is_ready else ("needs_login" if not authorized else "not_ready")
     return web.json_response({
         "status": status,
         "ok": is_ready,
         "bridge": "telegram",
         "clients": len(telegram_to_slack_map),
-        "authorized": is_telethon_authorized,
+        "authorized": authorized,
         "emergency_stop": snap,
     })
 
@@ -845,13 +852,28 @@ async def handle_telegram_message(event):
     }
     raw_mapped = (client_name or "").strip()
     raw_sender = (sender_name or "").strip()
+    is_group = bool(getattr(event, "is_group", False) or getattr(event, "is_channel", False) or str(chat_id).startswith("-"))
 
-    if raw_mapped and raw_mapped.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", raw_mapped):
-        effective_name = raw_mapped
-    elif raw_sender and raw_sender.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", raw_sender):
-        effective_name = raw_sender
+    if is_group:
+        # In groups: Always show the individual member who sent the message
+        if raw_sender and raw_sender.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", raw_sender):
+            effective_name = raw_sender
+        else:
+            sender_id = getattr(event, "sender_id", None)
+            if sender_id:
+                effective_name = f"Member {str(sender_id)[-4:]}"
+            elif raw_mapped and raw_mapped.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", raw_mapped):
+                effective_name = raw_mapped
+            else:
+                effective_name = f"Member {str(chat_id)[-4:]}"
     else:
-        effective_name = f"Client {str(chat_id)[-4:]}"
+        # 1-on-1 direct chat: Prefer mapped name from CRM if set
+        if raw_mapped and raw_mapped.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", raw_mapped):
+            effective_name = raw_mapped
+        elif raw_sender and raw_sender.lower() not in _BLANK_NAMES and re.search(r"[a-zA-Z0-9]", raw_sender):
+            effective_name = raw_sender
+        else:
+            effective_name = f"Client {str(chat_id)[-4:]}"
 
     message_text = event.message.text
 
@@ -1111,16 +1133,11 @@ async def send_new_chat_alert_to_slack(chat, chat_id, action_description):
     try:
         sent_alerts.add(str(chat_id))
         save_sent_alerts(sent_alerts)
-
-        if not SLACK_ADMIN_CHANNEL_ID:
-            logging.warning("SLACK_ADMIN_CHANNEL_ID is not set. Cannot send alert.")
-            return
-
-        await slack_post_message_with_retry(SLACK_ADMIN_CHANNEL_ID, message_text)
-        logging.info(f"Successfully sent new chat alert for '{name_display}'.")
-
+        # Suppressed Slack notification per alerts restructuring (status-only alerts)
+        logging.info(f"New chat detected for '{name_display}' (id: {chat_id}). Slack alert suppressed.")
+        return
     except Exception as e:
-        logging.error(f"Failed to send new chat alert to Slack: {e}")
+        logging.error(f"Failed to record new chat alert: {e}")
 
 @telethon_client.on(events.NewMessage(pattern=None, forwards=False, outgoing=True))
 async def handle_bot_created_chat(event):
@@ -1719,18 +1736,22 @@ async def main():
         await telethon_client.connect()
         is_auth = await telethon_client.is_user_authorized()
         if not is_auth:
-            logging.error("❌ Telethon is NOT authorized! Phone number and OTP login are required.")
-            is_telethon_authorized = False
-            _report(
-                code="TELEGRAM_LOGIN_REQUIRED",
-                summary_plain="Telegram session is not authenticated. Please perform the one-time phone login on the server.",
-                technical_detail="Telethon is_user_authorized() is False. Run 'docker compose run --rm tg-bridge python main_telegram.py' on server.",
-                context={"client_key": "telegram_bridge_auth"},
-                severity="critical"
-            )
-            # Avoid EOFError crash in background mode: wait for interactive login
-            while not await telethon_client.is_user_authorized():
-                await asyncio.sleep(10)
+            if sys.stdin.isatty():
+                logging.info("Terminal detected: starting interactive login prompt...")
+                await telethon_client.start()
+            else:
+                logging.error("❌ Telethon is NOT authorized! Phone number and OTP login are required.")
+                is_telethon_authorized = False
+                _report(
+                    code="TELEGRAM_LOGIN_REQUIRED",
+                    summary_plain="Telegram session is not authenticated. Please perform the one-time phone login on the server.",
+                    technical_detail="Telethon is_user_authorized() is False. Run 'docker compose run --rm -it tg-bridge python auth_telegram.py' on server.",
+                    context={"client_key": "telegram_bridge_auth"},
+                    severity="critical"
+                )
+                # Avoid EOFError crash in background mode: wait for interactive login
+                while not await telethon_client.is_user_authorized():
+                    await asyncio.sleep(10)
             logging.info("🎉 Telegram session is now authorized!")
             _report(
                 code="SERVICE_RECOVERED",

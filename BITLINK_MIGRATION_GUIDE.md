@@ -244,8 +244,11 @@ docker compose exec dashboard python3 migrate_sheets_to_pg.py --allow-truncate
 1. **Targeted Truncate:**
    * Cleans: `client_mappings`, `sales_leads`, `sales_pool`, `blocklist`, `project_managers`, `snippets`, `critical_alerts`, `alert_details`.
    * **PRESERVED:** `dashboard_users` (your admin account is 100% safe) and `settings` (all system settings kept).
-2. **Flexible Column Parsing:**
+2. **Flexible Column Parsing & Status Detection:**
    * Reads your single-sheet columns: `client name`, `platform`, `external id`, `slack channel id`, `paused` (handles spaces, underscores, and mixed case automatically).
+   * **Paused Column Handling:**
+     * `TRUE`, `true`, `1`: Set as `paused = True` (channel stays **paused**).
+     * `FALSE`, `false`, `0`, or **blank/empty**: Set as `paused = False` (channel is **Active** and immediately resumes live message forwarding).
 3. **Dual Insertion:**
    * **Delivery Client Mappings (`client_mappings`):** Every client is stored with their active Slack delivery channel ID.
    * **Sales Contacts Directory & CRM (`sales_leads`):** Every client is also seeded into `sales_leads` marked as `stage='won'` and `delivery_handed_off=True`, ensuring they appear in the **Sales Contacts Directory** and **Sales CRM Pipeline**.
@@ -285,7 +288,7 @@ Now that the data and Slack bots are configured, remove your personal test crede
    ```bash
    cd /opt/bitlink-sales
    docker compose stop gateway
-   rm -rf whatsapp-bot/baileys_auth_info/*
+   rm -rf whatsapp-bot/auth_info/*
    docker compose start gateway
    ```
 2. Stream gateway logs to view the QR code:

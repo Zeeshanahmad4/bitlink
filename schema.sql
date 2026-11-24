@@ -169,3 +169,9 @@ CREATE TABLE IF NOT EXISTS developer_channels (
     PRIMARY KEY (slack_user_id, channel_id)
 );
 
+-- Service heartbeats for non-HTTP background workers (ai_jobs, bitlink_manager)
+CREATE TABLE IF NOT EXISTS service_heartbeats (
+    service_name VARCHAR(64) PRIMARY KEY,
+    last_seen    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    status       VARCHAR(16) NOT NULL DEFAULT 'running'
+);
